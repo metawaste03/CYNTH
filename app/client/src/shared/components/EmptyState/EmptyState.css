@@ -1,0 +1,45 @@
+.empty-state {
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-7) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  max-width: 560px;
+}
+
+.empty-state__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty-state__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.empty-state h2 {
+  font-size: 17px;
+}
+
+.empty-state p {
+  font-size: 14px;
+}
+
+.empty-state__badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+}

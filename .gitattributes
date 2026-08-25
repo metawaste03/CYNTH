@@ -1,0 +1,21 @@
+# Git for Windows sets core.autocrlf=true system-wide, which would check these
+# files out as CRLF and produce whole-file diffs against a macOS or Linux clone.
+# Store and check out every text file as LF instead.
+* text=auto eol=lf
+
+# Binary assets: never normalize, never diff as text.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary
+*.db    binary
+
+# Generated lockfiles: collapse these in GitHub diffs.
+package-lock.json linguist-generated=true

@@ -1,0 +1,196 @@
+/* Base reset and typography. Kept intentionally minimal. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-bg);
+  color: var(--color-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--color-text);
+  font-weight: 600;
+  margin: 0;
+}
+
+p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+button {
+  font: inherit;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Shared page shell used by every feature page */
+.page {
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 1080px;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding: var(--space-4);
+    gap: var(--space-4);
+  }
+}
+
+/* Shared CRUD-UI utility classes, used across the Authors feature and future ones */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.button:hover {
+  background: var(--color-surface-muted);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-contrast);
+}
+
+.button--primary:hover {
+  filter: brightness(1.05);
+  background: var(--color-accent);
+}
+
+.button--danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: transparent;
+}
+
+.button--danger:hover {
+  background: rgba(192, 57, 43, 0.08);
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+}
+
+.status-badge.is-active {
+  color: #1a7f4b;
+  background: rgba(26, 127, 75, 0.12);
+}
+
+.status-badge.is-inactive {
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+}
+
+.form-error {
+  border: 1px solid var(--color-danger);
+  background: rgba(192, 57, 43, 0.08);
+  color: var(--color-danger);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 13.5px;
+}
+
+.form-error ul {
+  margin: 0;
+  padding-left: var(--space-4);
+  list-style: disc;
+}
+
+.flash-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 13.5px;
+}
+
+.flash-banner button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  color: inherit;
+}
+
+/* Skip link for keyboard users */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  padding: var(--space-2) var(--space-4);
+  border-radius: 0 0 var(--radius-sm) 0;
+  z-index: 100;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.skip-link:focus {
+  left: 0;
+}

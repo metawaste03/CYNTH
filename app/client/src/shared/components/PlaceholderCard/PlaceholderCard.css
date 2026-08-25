@@ -1,0 +1,47 @@
+.placeholder-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  box-shadow: var(--shadow-sm);
+}
+
+.placeholder-card__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.placeholder-card__icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.placeholder-card__body h2 {
+  font-size: 15px;
+  margin-bottom: var(--space-1);
+}
+
+.placeholder-card__body p {
+  font-size: 13.5px;
+}
+
+.placeholder-card__status {
+  align-self: flex-start;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+}

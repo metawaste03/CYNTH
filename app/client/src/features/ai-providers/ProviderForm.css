@@ -1,0 +1,63 @@
+.provider-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 560px;
+}
+
+.provider-form fieldset {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  background: var(--color-surface);
+}
+
+.provider-form legend {
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-subtle);
+  padding: 0 var(--space-2);
+}
+
+.provider-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.provider-form input,
+.provider-form textarea {
+  font: inherit;
+  font-weight: 400;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.provider-form input:focus-visible,
+.provider-form textarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.provider-form__hint {
+  font-size: 12px;
+  color: var(--color-text-subtle);
+  margin: calc(var(--space-2) * -1) 0 0;
+}
+
+.provider-form__actions {
+  display: flex;
+  justify-content: flex-end;
+}
