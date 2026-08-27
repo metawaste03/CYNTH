@@ -32,7 +32,9 @@ This document should:
 | 7 | Prompt Builder | **Complete** — added `GET /api/articles/:id/prompt`, which assembles one complete, human-readable prompt from an existing draft: the article's type/topic/title/keywords, the selected author's full voice profile and writing samples, the optional product's editorial notes, the content brief fields, and a fixed set of generation instructions (stay in the author's voice, respect preferred/prohibited expressions, never present the result as publish-ready). Returns clear validation errors instead of building anything if required fields (article type, author, topic, working title) are missing. Pure text assembly — calls no AI model and sends nothing externally. Added a read-only Prompt Preview page at `/new-article/:id/prompt` (character/word counts, copy to clipboard, export as `.txt`). Stopped as instructed. |
 | 8 | AI Provider Management | **Complete** — full CRUD for AI provider configuration and their models, plus the Model Router. Added `ai_providers` and `ai_provider_models` tables. Provider API keys are never written to SQLite — only the name of the environment variable that holds one (`api_key_env_var`); the key value itself lives in a local, gitignored `.env.local` file and is loaded into `process.env` once at server startup (`shared/secrets/providerSecrets.ts`). Only one default provider system-wide, and one default model per purpose, enforced in the repository (same unset-others-then-set pattern used for `product_images.is_primary`). `POST /:id/test-connection` returns a fixed placeholder message and calls nothing external — no provider has actually been contacted by the system at any point. Added the Model Router (`model-router/`): given a task purpose, a pure database lookup returns which configured provider/model would handle it, without ever contacting that provider or exposing the key itself. Wired into the Prompt Preview page as a "Prepare For Generation" check, which reports the configured provider/model for Article Generation but sends no request. Client: new Settings → AI Providers screens (list, detail, create, edit). No AI model has been called by Cynth at any point through Milestone 8. Stopped as instructed. |
 | 9 | AI Generation Engine | **Complete** — the first working prompt → configured AI model → response → Cynth pipeline. See the detail section below. |
-| 10+ | TODO | Not yet scoped. |
+| 10–12 | Content Architecture, Author Persona, Model Pricing | **Complete in code, not recorded here.** Milestone 10 added the project/theme/topic content architecture and article provenance snapshots; Milestone 11 added the author persona and topic guidance fields; Milestone 12 added model pricing metadata, the cost-safety layer, and project editorial guidance. The work is in the codebase and documented in `shared/database/migrations.ts`, but these three milestones were never given rows here or entries in [CHANGELOG.md](CHANGELOG.md). Recorded as a gap rather than reconstructed after the fact. |
+| 13 | Content Production System | **Complete** — OpenRouter model discovery and the provider-independent model registry, per-generation model selection with pricing shown, the WordPress CMS connector with draft-only publishing and duplicate protection, the single-process production server, Windows startup/recovery, and the backend health indicator. See the detail section below. |
+| 14+ | TODO | Not yet scoped. The next milestone is the SEO Engine. |
 
 Milestone 0's deliverable was strictly limited to: the `docs/`, `prompts/`, `data/`, `app/`, `database/` folder structure, populated documentation files, and this `README.md`. No application code, dependencies, or implementations were created, per instruction.
 
@@ -96,3 +98,41 @@ Each future milestone should be scoped and approved before work begins, and reco
 - TODO: Define the overall milestone roadmap toward Version 1 ([02_VERSION1_SCOPE.md](02_VERSION1_SCOPE.md)).
 - TODO: Define what "review" means between milestones (who approves, what criteria).
 - ~~TODO: Going forward, update this file and [CHANGELOG.md](CHANGELOG.md) at the close of each milestone as originally intended, rather than after the fact — see the note above on Milestones 6–8.~~ **Resolved (2026-08-25):** made binding as Rule 8 in [04_DEVELOPMENT_RULES.md](04_DEVELOPMENT_RULES.md) and first applied at the close of Milestone 9.
+
+
+## Milestone 13 — Content Production System
+
+The milestone that moved Cynth from a working content-generation engine to a content-production system: it can now be told which models exist, which one to use and what that costs, and it can hand finished work to WordPress.
+
+### OpenRouter model management
+
+- **No hardcoded model list.** `GET /api/ai-providers/:id/catalog` reads the provider's live catalogue — 417 models at the time of writing — and reports id, display name, vendor, context length, input/output pricing, per-request pricing, capability metadata (modalities, tokenizer, output cap, supported parameters, moderation) and availability. Cached for 15 minutes; any refresh bypasses the cache.
+- **Free/paid by price, never by name.** A model is free only when its input and output prices are both known and both zero, and any flat per-request charge is zero. Nothing reads the model id, which matters because OpenRouter ships ids ending in `:free`, paid models with "free" in their names, and genuinely-free models with no marker at all.
+- **Unknown is not free.** Missing prices classify as `unknown` and are treated as paid. Negative prices — OpenRouter's sentinel for models whose cost depends on where they route, used by five live models — are normalised to unknown rather than taken literally, which would otherwise have produced a negative estimated cost.
+- **Discover → inspect → add.** Models are added to the registry from the UI, with the pricing read server-side from the provider's catalogue; the request names a model and nothing more, so a browser cannot assert what a model costs.
+- **Provider-independent registry.** `Provider → Model Registry → Generation`. The Anthropic and OpenAI adapters are untouched.
+- **Refresh preserves user configuration.** Re-reading a catalogue updates provider-owned metadata only; display name, purpose, enabled state and default-for-purpose are never rewritten. A model missing from a catalogue keeps its last known pricing and is flagged as no longer listed.
+
+### Cost safety
+
+- The New Article workflow offers a model picker grouped by cost class, showing provider and per-million-token pricing on every option and a summary of the selection beneath it.
+- A selected model is the model that runs. No path substitutes another — not the purpose default, not a cheaper one, not a working one. A selection that cannot run is an error.
+- Selecting a paid model does not bypass Milestone 12's spend gate: Test mode refuses it outright, Production mode requires an explicit per-request confirmation, and the confirmation resets whenever the model changes.
+
+### WordPress
+
+- **A connector, not a WordPress engine.** `CYNTH → CMS Connector → WordPress`. The word "WordPress" appears only inside the connector and in UI labels.
+- **The contract has no publish operation.** Draft-only is structural, not procedural — see [12_WORDPRESS.md](12_WORDPRESS.md).
+- **Test Connection distinguishes four failures** — unreachable site, unavailable REST API, rejected credentials, and an account that cannot post — and creates nothing.
+- **Duplicate protection.** `article_cms_links` records the remote post; a second push is an explicit **Update WordPress Draft**, `mode` is verified against reality rather than trusted, and an update to a post a human has published is refused.
+- **Credentials** use the same store as AI provider keys: only the env var name reaches SQLite, only `hasCredential` reaches the browser.
+
+### Server architecture
+
+- Express serves the built client from the same process as the API. `npm run build` then `npm start` at the project root; development still uses Vite.
+- `scripts/install-startup-task.ps1` registers a Windows scheduled task with crash recovery; `status.ps1` reports both the task state and `/api/health`.
+- A persistent backend health indicator in the app shell, reversing this binder's earlier deferral — see [14_LOCAL_SERVICE_MANAGEMENT.md](14_LOCAL_SERVICE_MANAGEMENT.md).
+
+### Deliberately not built
+
+The SEO Engine, the web-intelligence crawler, the backlink engine, and an article editor. `CmsSeoMetadata` is declared and threaded through the push path but always `null`, so the SEO milestone changes one function rather than reopening the connector.

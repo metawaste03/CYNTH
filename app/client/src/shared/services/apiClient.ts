@@ -9,13 +9,42 @@ export class ApiError extends Error {
   retryable: boolean;
 
   constructor(status: number, errors: string[], code: string | null = null, retryable = false) {
-    super(errors.join(' ') || 'Request failed.');
+    const resolved = errors.length ? errors : [describeBareStatus(status)];
+    super(resolved.join(' '));
     this.status = status;
-    this.errors = errors.length ? errors : ['Request failed.'];
+    this.errors = resolved;
     this.code = code;
     this.retryable = retryable;
   }
 }
+
+/**
+ * What to say when a response carries no `errors` array of its own.
+ *
+ * The old fallback was a bare "Request failed.", which collapsed genuinely
+ * different problems into one unhelpful sentence — most damagingly, a backend
+ * that simply isn't running looked identical to a rejected request. Cynth is
+ * two local processes, so "the server isn't up" is a routine state and the UI
+ * has to name it.
+ */
+function describeBareStatus(status: number): string {
+  if (status === 0) {
+    return 'Cannot reach the Cynth server. Check that the backend is running (npm run dev in app/server), then try again.';
+  }
+  if (status === 502 || status === 503 || status === 504) {
+    return `The Cynth server did not respond (HTTP ${status}). It may have stopped or restarted — check that the backend is running, then try again.`;
+  }
+  if (status === 404) {
+    return 'That endpoint does not exist on the Cynth server (HTTP 404). The client and server may be out of sync.';
+  }
+  if (status >= 500) {
+    return `The Cynth server hit an unexpected error (HTTP ${status}). Check the server console for details.`;
+  }
+  return `The request was rejected (HTTP ${status}).`;
+}
+
+/** Network-level failure — status 0, because no HTTP response ever arrived. */
+export const SERVER_UNREACHABLE = 'server_unreachable';
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) {
@@ -36,18 +65,32 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+/**
+ * fetch() rejects rather than resolving when the server is unreachable — the
+ * dev server down, the proxy unable to connect, the machine offline. Left
+ * unhandled that surfaced as a raw TypeError, which callers could not tell
+ * apart from a bug in their own code. It becomes an ApiError like any other,
+ * so every caller's existing `instanceof ApiError` branch reports it properly.
+ */
+async function send<T>(path: string, init: RequestInit): Promise<T> {
+  let response: Response;
+
+  try {
+    response = await fetch(`/api${path}`, init);
+  } catch {
+    throw new ApiError(0, [describeBareStatus(0)], SERVER_UNREACHABLE, true);
+  }
+
   return handleResponse<T>(response);
 }
 
+function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  return send<T>(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+}
+
 /** For multipart/form-data (file uploads) — no Content-Type header, so the browser sets the multipart boundary. */
-async function upload<T>(path: string, formData: FormData): Promise<T> {
-  const response = await fetch(`/api${path}`, { method: 'POST', body: formData });
-  return handleResponse<T>(response);
+function upload<T>(path: string, formData: FormData): Promise<T> {
+  return send<T>(path, { method: 'POST', body: formData });
 }
 
 export const api = {

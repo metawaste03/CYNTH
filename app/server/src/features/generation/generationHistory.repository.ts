@@ -19,6 +19,12 @@ export interface GenerationHistoryMetadata {
   reportedModel?: string | null;
   generatedCharacterCount?: number;
   titleDetected?: boolean;
+  /** Reproducibility: the prompt structure, mode and cost class this attempt ran under. */
+  promptVersion?: string;
+  generationMode?: string;
+  costClass?: string;
+  /** Whether the model came from an explicit user choice or the configured purpose default. */
+  modelSelection?: 'explicit' | 'default';
 }
 
 export interface RecordGenerationInput {

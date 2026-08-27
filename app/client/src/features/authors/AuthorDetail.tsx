@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
+import { AuthorThemes } from './AuthorThemes';
 import {
   fetchAuthor,
   deleteAuthor,
@@ -176,6 +177,24 @@ export function AuthorDetail() {
           <Field label="Tone" value={author.tone} />
           <Field label="Target Audience" value={author.targetAudience} />
         </dl>
+      </section>
+
+      <section className="author-detail__section">
+        <h2>Persona</h2>
+        <p className="content-hint">
+          The editorial identity the model writes as. Everything here is sent as generation guidance.
+        </p>
+        <dl>
+          <Field label="Expertise" value={author.expertise} />
+          <Field label="Perspective" value={author.perspective} />
+          <Field label="Editorial Principles" value={author.editorialPrinciples} />
+          <Field label="Boundaries" value={author.boundaries} />
+        </dl>
+      </section>
+
+      <section className="author-detail__section">
+        <h2>Thematic Areas</h2>
+        <AuthorThemes authorId={author.id} />
       </section>
 
       <section className="author-detail__section">

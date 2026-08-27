@@ -1,0 +1,126 @@
+/* Backend status indicator, shown in the app shell's top bar. */
+
+.server-health {
+  position: relative;
+  margin-left: auto;
+}
+
+.server-health__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.server-health__badge:hover {
+  border-color: var(--color-text-subtle);
+  color: var(--color-text);
+}
+
+.server-health__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-subtle);
+  flex: none;
+}
+
+.server-health__badge.is-running .server-health__dot {
+  background: #2f9e5f;
+}
+
+.server-health__badge.is-unavailable {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.server-health__badge.is-unavailable .server-health__dot {
+  background: var(--color-danger);
+}
+
+/* The word "Backend" is context the top bar can spare on a narrow screen;
+   Running / Unavailable is the part that carries the meaning. */
+.server-health__label-prefix {
+  color: var(--color-text-subtle);
+}
+
+.server-health__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  width: min(340px, calc(100vw - var(--space-5)));
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.server-health__facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+
+.server-health__facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 0.85rem;
+}
+
+.server-health__facts dt {
+  color: var(--color-text-muted);
+}
+
+.server-health__facts dd {
+  margin: 0;
+  color: var(--color-text);
+  text-align: right;
+}
+
+.server-health__message {
+  margin: 0 0 var(--space-2);
+  font-size: 0.85rem;
+  color: var(--color-text);
+}
+
+.server-health__hint {
+  margin: 0 0 var(--space-3);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.server-health__hint code {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-size: 0.95em;
+}
+
+.server-health__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.server-health__checked {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+}
+
+@media (max-width: 480px) {
+  .server-health__label-prefix {
+    display: none;
+  }
+}

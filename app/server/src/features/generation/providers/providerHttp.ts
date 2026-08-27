@@ -156,3 +156,39 @@ export function readTokenCount(source: unknown, key: string): number | null {
   const value = (source as Record<string, unknown>)[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
+
+/**
+ * A GET returning JSON, for provider metadata endpoints (model catalogues).
+ * Shares postJson's timeout and error vocabulary; generates nothing.
+ */
+export async function getJson(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<ProviderResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new GenerationError('timeout', `The provider did not respond within ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw new GenerationError('network_error', 'Cynth could not reach the provider to read its model catalogue.');
+  }
+
+  const rawText = await response.text().catch(() => '');
+  let json: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(rawText) as unknown;
+    if (parsed && typeof parsed === 'object') json = parsed as Record<string, unknown>;
+  } catch {
+    json = null;
+  }
+
+  if (!response.ok) throwForFailedResponse({ status: response.status, ok: false, json, rawText }, headers.authorization ?? '');
+  if (!json) throwForUnparsableBody();
+
+  return { status: response.status, ok: true, json, rawText };
+}

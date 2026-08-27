@@ -11,15 +11,21 @@ import { dashboardRouter } from './features/dashboard/dashboard.routes.js';
 import { articlesRouter } from './features/articles/articles.routes.js';
 import { aiProvidersRouter } from './features/ai-providers/aiProviders.routes.js';
 import { modelRouterRouter } from './features/model-router/modelRouter.routes.js';
-import { loadProviderSecrets } from './shared/secrets/providerSecrets.js';
+import { contentRouter } from './features/content/content.routes.js';
+import { generationRouter } from './features/generation/generation.routes.js';
+import { cmsRouter } from './features/cms/cms.routes.js';
+import { loadSecrets } from './shared/secrets/secretStore.js';
+import { backfillMissingSlugs } from './features/articles/articles.repository.js';
+import { serveBuiltClient } from './shared/static/clientStatic.js';
 
 const app = express();
 
 app.use(express.json());
 
-// Load any previously-saved AI provider API keys into process.env before
-// anything else runs. Keys live only here and in the .env.local file — never in SQLite.
-loadProviderSecrets();
+// Load any previously-saved credentials (AI provider keys, CMS credentials)
+// into process.env before anything else runs. Values live only there and in
+// the gitignored .env.local file — never in SQLite.
+loadSecrets();
 
 const dbStatus = initializeDatabase();
 console.log(`Database ready at ${dbStatus.path}`);
@@ -30,22 +36,47 @@ console.log(
     : `article_types already had ${dbStatus.articleTypesCount} rows — skipped seeding.`,
 );
 
+// Idempotent: gives a slug to any article created before slugs were stored.
+const slugged = backfillMissingSlugs();
+if (slugged > 0) console.log(`Backfilled slugs for ${slugged} article(s).`);
+
+console.log(
+  dbStatus.projectSeeded
+    ? `Seeded initial content project with ${dbStatus.themeCount} thematic areas.`
+    : `Content project already configured (${dbStatus.themeCount} thematic areas) — skipped seeding.`,
+);
+
 ensureProductUploadsDir();
 console.log(`Product image uploads stored under ${UPLOADS_ROOT}`);
+
+/** When this process started, so health can report how long it has been up. */
+const STARTED_AT = new Date();
 
 // Serves uploaded files (e.g. /uploads/products/<file>). Only file paths are
 // stored in SQLite — the files themselves live on disk, per Milestone 4.
 app.use('/uploads', express.static(UPLOADS_ROOT));
 
 /**
- * Health check, now reporting the database connection too. Still no other
- * business logic — real feature routes will live under src/features/.
+ * HEALTH.
+ *
+ * The one endpoint the UI polls to decide whether the backend is Running or
+ * Unavailable. It must stay cheap and dependency-free — no provider calls, no
+ * CMS calls, and no query that could itself be slow — because a health check
+ * that can hang is worse than none at all.
+ *
+ * It reports nothing sensitive: no credentials, no env var values, and no
+ * configuration beyond what the app already shows on its own screens.
  */
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'cynth-server',
     timestamp: new Date().toISOString(),
+    startedAt: STARTED_AT.toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    /** Whether this process is also serving the built client, i.e. the single-process production shape. */
+    mode: clientStatic.serving ? 'production' : 'development',
+    servingClient: clientStatic.serving,
     database: {
       connected: true,
       path: DATABASE_PATH,
@@ -61,12 +92,33 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/articles', articlesRouter);
 app.use('/api/ai-providers', aiProvidersRouter);
 app.use('/api/model-router', modelRouterRouter);
+// Projects, thematic areas and topics — the configurable content architecture.
+app.use('/api/content', contentRouter);
+// Generation policy: the mode that governs whether Cynth may spend money.
+app.use('/api/generation', generationRouter);
+// CMS connections (WordPress first). Article pushes live on /api/articles.
+app.use('/api/cms', cmsRouter);
+
+/**
+ * The built client, in production only.
+ *
+ * Registered after every API route so an unknown /api path still returns a
+ * JSON 404 rather than the SPA shell, and before the 404/error handlers so a
+ * client-side route reaches the app instead of them.
+ */
+const clientStatic = serveBuiltClient(app);
+console.log(
+  clientStatic.serving
+    ? `Serving the built client from ${clientStatic.dir} — single-process mode.`
+    : `Not serving a built client: ${clientStatic.reason}`,
+);
 
 app.use(notFound);
 app.use(errorHandler);
 
 const server = app.listen(env.port, () => {
-  console.log(`Cynth server foundation listening on http://localhost:${env.port}`);
+  console.log(`Cynth listening on http://localhost:${env.port}`);
+  if (clientStatic.serving) console.log(`Open http://localhost:${env.port} to use Cynth.`);
 });
 
 function shutdown() {

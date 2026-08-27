@@ -20,7 +20,8 @@ const SECTIONS: SettingsSection[] = [
   {
     icon: 'site',
     title: 'WordPress',
-    description: 'Connect the EveryFiveDays WordPress site for manual publishing.',
+    description: 'Connect a WordPress site so approved drafts can be sent to it. Cynth never publishes automatically.',
+    href: '/settings/wordpress',
   },
   {
     icon: 'qualityGate',

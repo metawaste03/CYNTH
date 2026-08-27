@@ -1,0 +1,84 @@
+/* Model selection for generation. Pricing is part of the choice, never a footnote. */
+
+.model-picker {
+  margin: var(--space-4) 0;
+}
+
+.model-picker__field {
+  display: block;
+}
+
+.model-picker__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--color-text-subtle);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.model-picker__field select {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.model-picker__summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.model-picker__summary.is-free {
+  border-left-color: #2f9e5f;
+}
+
+.model-picker__summary.is-paid {
+  border-left-color: #c58a1a;
+}
+
+.model-picker__summary.is-unknown {
+  border-left-color: var(--color-danger);
+}
+
+.model-picker__summary dt {
+  color: var(--color-text-subtle);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.model-picker__summary dd {
+  margin: 3px 0 0;
+  font-size: 0.88rem;
+}
+
+.model-picker__prices {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-picker__problem dd {
+  color: var(--color-danger);
+}
+
+.model-picker__empty {
+  margin: var(--space-4) 0;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}

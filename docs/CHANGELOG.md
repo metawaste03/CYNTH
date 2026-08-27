@@ -2,6 +2,67 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.11.0] - 2026-08-27
+
+### Summary
+
+Milestone 13 (Content Production System). Cynth can now be told which models exist and what they cost, be pointed at a specific model per generation, and hand finished drafts to WordPress — and it runs as a single process that starts with Windows.
+
+**OpenRouter model management**
+
+- **`app/server/src/features/ai-providers/modelCatalog.service.ts`** — model discovery. Reads a provider's live catalogue (417 models from OpenRouter at time of writing), classifies every entry, and filters by free / paid / unpriced. Cached for 15 minutes; any refresh bypasses the cache. **Cynth contains no hardcoded model list.**
+- **Catalogue metadata** — the `ProviderModelInfo` contract now carries vendor, description, per-request price, availability, publication date, and capability metadata (input/output modalities, tokenizer, max output tokens, supported parameters, moderation). All provider-published; none inferred.
+- **Free/paid classification by price, never by name** — `classifyModel()` reads only pricing. A model is free when its input and output prices are both known and both zero and any flat per-request charge is zero. It never reads the model id, which matters because OpenRouter lists ids ending in `:free`, paid models with "free" in their names, and genuinely-free models with no marker at all.
+- **Negative prices are a sentinel, not a price** — OpenRouter publishes `-1` for models whose cost depends on where they route (`openrouter/auto` and four others in the live catalogue). Previously these would have classified as "paid" with a negative price and produced a *negative* estimated cost. They now normalise to `unknown`, which is treated as paid.
+- **Model registry** — `ai_provider_models` gained `vendor`, `request_price`, `catalog_status`, `capabilities` (JSON) and `in_catalog`. Adding a model from the catalogue stores the provider's own metadata; the request names a model and nothing more, so a browser cannot assert what a model costs.
+- **Duplicate protection, purpose-aware** — re-adding a model already registered for the same purpose refreshes it in place. Registering one model under two *different* purposes stays a legitimate configuration (the registry has always allowed it), which a purpose-blind upsert would have silently broken.
+- **Catalogue refresh preserves user configuration** — `POST /api/ai-providers/:id/sync-models` updates provider-owned metadata on every registered model and never touches display name, purpose, enabled state or default-for-purpose. A model missing from the catalogue keeps its last known pricing and is flagged `in_catalog = 0`; blanking it would turn "we no longer know what this costs" into "this is free".
+- **Provider Test Connection is now real** — it reads the catalogue (a free metadata call) and reports how many models are free, paid and unpriced. Deliberately not a test generation, which would be billable.
+- **UI** — a Discover Models browser on the AI Provider screen: free/paid/unpriced filters with live counts, search across id, name and vendor, an Inspect view of full capability metadata, per-model purpose assignment, and Add to Registry. Registry cards now show cost class, input/output pricing per million tokens, context length, vendor and when metadata was last refreshed.
+
+**Model selection and cost safety**
+
+- **`GET /api/ai-providers/selectable-models`** and a model picker in the New Article workflow, grouped by cost class, with provider and per-million-token pricing on every option.
+- **`routeForModel()`** — the Model Router resolves an explicitly chosen registry entry. The picker names a registry entry only; the browser never selects a provider, an endpoint or a credential.
+- **A selected model is the model that runs.** No code path substitutes another — not the purpose default, not a cheaper one, not a working one. A selection that cannot run is an error, and a free model that fails never becomes a paid one.
+- **Selection does not bypass the spend gate** — Test mode still refuses paid models outright; Production mode still requires explicit per-request confirmation, and the confirmation resets whenever the selected model changes.
+- Cost estimates now include a flat per-request charge where a catalogue publishes one, and generation history records whether the model came from an explicit choice or the purpose default.
+
+**WordPress**
+
+- **`app/server/src/features/cms/`** (new) — a CMS connector layer: `CYNTH → CMS Connector → WordPress`. Nothing above the connector knows WordPress exists.
+- **The connector contract has no publish operation.** No `publish()`, no `setStatus()`. Draft-only is structural rather than procedural. Every write sends a literal `draft` constant, and an update to a post whose remote status is no longer `draft` is refused outright — overwriting live content is not Cynth's decision, and asking for draft status on a published post would silently unpublish it.
+- **Connection settings** — site URL, authentication method, username, credential, connection status, test, active/inactive, default, and an optional author mapping chosen from the site's real users. The site URL is always configurable and never assumed, so the same record works against the local install now and a live domain later.
+- **Test Connection** distinguishes four failures — unreachable site, unavailable REST API, rejected credentials, account that cannot post — because they have four different fixes. It performs two reads and creates nothing.
+- **Article → WordPress Draft** — title, body, slug and status mapped; author mapped only when configured; excerpt deliberately not sent, because Cynth has no authoritative excerpt and the list preview is a display truncation, not editorial content.
+- **Markup translation** — `articleMarkup.ts` renders the generated Markdown body to HTML (headings, paragraphs, lists, blockquotes, code, emphasis, links). Source is escaped before markup is introduced and only `http(s)`/root-relative link targets are linkified, so a body cannot inject markup or a `javascript:` URL into a post.
+- **Post identity and duplicate protection** — `article_cms_links` records the remote post id, status, URL, site and push timestamps. The preflight states whether the button creates or updates; `mode` is required and verified against reality rather than trusted; a deleted remote post is reported and then re-creatable; an in-flight guard stops a double-click producing two posts.
+- **Synchronisation history** — `cms_push_history` records every create, update, refresh and test, including refusals, and survives deletion of the connection that produced it. No credential is recorded.
+- **UI** — a WordPress settings screen with per-stage test diagnostics and recent synchronisation activity; a push panel on the article view showing the existing post, its remote status, exactly what will be sent, and either **Push to WordPress as Draft** or **Update WordPress Draft**.
+
+**Server architecture**
+
+- **`shared/static/clientStatic.ts`** — Express serves the built client from the same process as the API. One process, one port, no proxy, and `node dist/index.js` has no watch child, so no orphaned Node process can hold the port. Mode is detected from the running file's extension, overridable with `CYNTH_SERVE_CLIENT`; development still uses Vite and is unchanged.
+- **Root `package.json`** — `npm run build` (client then server), `npm start`, `npm test`.
+- **`scripts/`** (new) — `install-startup-task.ps1` registers a Windows scheduled task with crash recovery (logon trigger by default, `-AtStartup` for pre-login), `uninstall-startup-task.ps1` removes it, `status.ps1` reports both the task state and `/api/health`.
+- **Health** — `/api/health` now reports uptime, start time, mode and whether this process serves the client. A persistent indicator in the app shell polls it every 20 seconds and on focus, showing **Backend Running** or **Backend Unavailable** with the command that starts it. This reverses the binder's earlier deferral, which had missed the case of a page already open when the backend dies.
+- **`notFound`** now returns the same `errors: string[]` shape as every other endpoint, so a mistyped API path reports itself properly instead of falling back to a generic message.
+
+**Database** (additive, idempotent migrations, nothing destroyed): `ai_provider_models` gained `vendor`, `request_price`, `catalog_status`, `capabilities`, `in_catalog`. New tables `cms_connections`, `article_cms_links`, `cms_push_history`.
+
+**Security**
+
+- The secret store was generalised from AI provider keys to all credentials (`shared/secrets/secretStore.ts`). WordPress credentials use the identical mechanism: only the env var *name* reaches SQLite, only `hasCredential` reaches the browser, exactly one server-side function returns a value, and deleting a connection deletes its credential.
+- CMS error wording is redacted before display or storage, covering WordPress's application-password format and `Basic` headers alongside the existing bearer-token patterns.
+- Verified: no credential in any table, DTO, preflight, push result, push history record, or health payload.
+
+**Tests** — 95 automated tests across four suites (`pipeline`, `models`, `wordpress`, `server`), all against local mocks. No test spends money, and no test publishes to WordPress; the mock CMS asserts per request that every write it receives asks for a draft.
+
+### Known limitations
+
+1. **No live WordPress push was performed.** The connector was verified against the real `everyfivedays.local` site through the reachability and REST-API stages, and correctly reported a deliberately-wrong credential as an *authentication* failure. Creating a real draft needs a WordPress Application Password, which is the user's to generate — no credential was created on their behalf. Push, update and duplicate protection are covered end to end against a mock CMS.
+2. **Milestones 10–12 remain unrecorded** in this changelog and in [13_MILESTONES.md](13_MILESTONES.md). The work exists in the codebase; the entries were never written, and have been noted as a gap rather than reconstructed after the fact.
+
 ## [0.10.0] - 2026-08-25
 
 ### Summary

@@ -1,0 +1,261 @@
+/* Model discovery: browse a provider's live catalogue, inspect, add. */
+
+.model-discovery {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+.model-discovery__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.model-discovery__header h2 {
+  margin: 0 0 var(--space-1);
+}
+
+.model-discovery__hint {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}
+
+.model-discovery__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.model-discovery__filters {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.model-discovery__filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.model-discovery__filter.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.model-discovery__filter-count {
+  padding: 0 var(--space-2);
+  border-radius: 999px;
+  background: var(--color-surface-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-discovery__search input {
+  min-width: 260px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.model-discovery__meta,
+.model-discovery__empty {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.model-discovery__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.catalog-model {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+/* The left edge carries the cost class, so a scan down the list reads as
+   "what can I use for nothing" without having to read any text. */
+.catalog-model.is-free {
+  border-left-color: #2f9e5f;
+}
+
+.catalog-model.is-paid {
+  border-left-color: #c58a1a;
+}
+
+.catalog-model.is-unknown {
+  border-left-color: var(--color-danger);
+}
+
+.catalog-model__main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.catalog-model__identity h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.catalog-model__id {
+  margin: 2px 0 0;
+  color: var(--color-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  word-break: break-all;
+}
+
+.catalog-model__badges {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.cost-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.cost-badge.is-free {
+  background: rgba(47, 158, 95, 0.15);
+  color: #2f9e5f;
+}
+
+.cost-badge.is-paid {
+  background: rgba(197, 138, 26, 0.15);
+  color: #a5720f;
+}
+
+.cost-badge.is-unknown {
+  background: rgba(192, 57, 43, 0.14);
+  color: var(--color-danger);
+}
+
+.catalog-model__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+}
+
+.catalog-model__facts--wide {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.catalog-model__facts dt {
+  color: var(--color-text-subtle);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.catalog-model__facts dd {
+  margin: 2px 0 0;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.catalog-model__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.catalog-model__purpose select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.catalog-model__details {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+.catalog-model__description {
+  margin: 0;
+  max-width: 75ch;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.catalog-model__parameters {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.catalog-model__details code {
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+.model-discovery__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -4,6 +4,8 @@ import type { NavItem } from '../types/navigation';
 export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/', icon: 'dashboard' },
   { id: 'new-article', label: 'New Article', path: '/new-article', icon: 'newArticle' },
+  { id: 'drafts', label: 'Drafts', path: '/drafts', icon: 'site' },
+  { id: 'themes', label: 'Thematic Areas', path: '/content/themes', icon: 'dashboard' },
   { id: 'authors', label: 'Authors', path: '/authors', icon: 'authors' },
   { id: 'products', label: 'Products', path: '/products', icon: 'products' },
   { id: 'seo-review', label: 'SEO Review', path: '/seo-review', icon: 'seoReview' },

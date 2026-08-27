@@ -25,7 +25,11 @@ export type GenerationErrorCode =
   | 'network_error'
   | 'empty_response'
   // Cynth's own guard against a duplicate request.
-  | 'generation_in_progress';
+  | 'generation_in_progress'
+  // Cost safety. Neither is a provider failure — both mean Cynth deliberately
+  // declined to spend money, and neither ever triggers a model substitution.
+  | 'paid_generation_blocked'
+  | 'cost_confirmation_required';
 
 const HTTP_STATUS_BY_CODE: Record<GenerationErrorCode, number> = {
   provider_not_configured: 409,
@@ -34,6 +38,8 @@ const HTTP_STATUS_BY_CODE: Record<GenerationErrorCode, number> = {
   unsupported_provider: 409,
   invalid_configuration: 409,
   generation_in_progress: 409,
+  paid_generation_blocked: 409,
+  cost_confirmation_required: 402,
   authentication_failed: 502,
   model_not_found: 502,
   rate_limited: 429,

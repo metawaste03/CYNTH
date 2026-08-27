@@ -15,6 +15,11 @@ export interface AuthorRow {
   preferred_expressions: string | null;
   prohibited_expressions: string | null;
   writing_notes: string | null;
+  /** Author persona (Milestone 11) — the dimensions not already covered by the voice fields above. */
+  expertise: string | null;
+  perspective: string | null;
+  editorial_principles: string | null;
+  boundaries: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -71,6 +76,12 @@ export interface ArticleRow {
   author_id: number | null;
   article_type_id: number | null;
   product_id: number | null;
+  /** Content configuration (Milestone 10). Nullable: a draft is valid before any of it is chosen. */
+  project_id: number | null;
+  theme_id: number | null;
+  topic_id: number | null;
+  /** Resolved names captured at generation time, as JSON — the historical record, immune to later renames. */
+  provenance_snapshot: string | null;
   status: string;
   content: string | null;
   topic: string | null;
@@ -139,6 +150,20 @@ export interface AiProviderRow {
 }
 
 export interface AiProviderModelRow {
+  /** Pricing metadata from the provider's catalogue (Milestone 12). NULL = not known, never assumed free. */
+  prompt_price: number | null;
+  completion_price: number | null;
+  context_length: number | null;
+  is_free: number | null;
+  pricing_synced_at: string | null;
+  /** Registry metadata from the provider's catalogue (Milestone 13). All refreshable, none inferred. */
+  vendor: string | null;
+  /** A flat per-request charge. Non-zero means the model is not free regardless of per-token prices. */
+  request_price: number | null;
+  catalog_status: string | null;
+  /** JSON capability blob, exactly as normalised from the catalogue. Opaque to Cynth. */
+  capabilities: string | null;
+  in_catalog: number | null;
   id: number;
   provider_id: number;
   model_name: string;
@@ -148,4 +173,67 @@ export interface AiProviderModelRow {
   is_default_for_purpose: number;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A configured CMS destination (Milestone 13). WordPress is the first
+ * connector_type; the shape is deliberately CMS-agnostic.
+ *
+ * No credential value is ever stored — credential_env_var holds the NAME of
+ * the environment variable, exactly as ai_providers.api_key_env_var does.
+ */
+export interface CmsConnectionRow {
+  id: number;
+  name: string;
+  connector_type: string;
+  description: string | null;
+  base_url: string;
+  auth_method: string;
+  username: string | null;
+  credential_env_var: string | null;
+  default_remote_author_id: string | null;
+  default_remote_author_name: string | null;
+  is_active: number;
+  is_default: number;
+  last_status: string | null;
+  last_stage: string | null;
+  last_message: string | null;
+  last_checked_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The durable link between one Cynth Article and its copy in one CMS. Its existence is what makes a second push an update rather than a duplicate. */
+export interface ArticleCmsLinkRow {
+  id: number;
+  article_id: number;
+  connection_id: number;
+  /** Text, not integer: Cynth must not assume every CMS numbers its posts. */
+  external_id: string;
+  external_status: string | null;
+  external_url: string | null;
+  external_edit_url: string | null;
+  site_url: string | null;
+  first_pushed_at: string | null;
+  last_pushed_at: string | null;
+  last_synced_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One synchronisation attempt, success or failure. Audit trail only — never a credential. */
+export interface CmsPushHistoryRow {
+  id: number;
+  article_id: number | null;
+  connection_id: number | null;
+  connection_name: string | null;
+  site_url: string | null;
+  operation: string;
+  status: string;
+  external_id: string | null;
+  external_status: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  duration_ms: number | null;
+  created_at: string;
 }

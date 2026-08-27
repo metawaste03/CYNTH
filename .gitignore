@@ -35,3 +35,11 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Ad-hoc credential notes that get parked in the project folder.
+# Cynth's own provider keys belong in app/server/.env.local (ignored above),
+# never in a loose text file inside the repository.
+*API Key*.txt
+*API Keys*.txt
+*api-key*.txt
+*api-keys*.txt

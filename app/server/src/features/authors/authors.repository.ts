@@ -29,6 +29,11 @@ export interface AuthorDto {
   preferredExpressions: string | null;
   prohibitedExpressions: string | null;
   writingNotes: string | null;
+  /** Author persona (Milestone 11). Supplied by the user — Cynth never invents editorial identity. */
+  expertise: string | null;
+  perspective: string | null;
+  editorialPrinciples: string | null;
+  boundaries: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -51,6 +56,10 @@ function mapAuthor(row: AuthorRow): AuthorDto {
     preferredExpressions: row.preferred_expressions,
     prohibitedExpressions: row.prohibited_expressions,
     writingNotes: row.writing_notes,
+    expertise: row.expertise,
+    perspective: row.perspective,
+    editorialPrinciples: row.editorial_principles,
+    boundaries: row.boundaries,
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -124,8 +133,9 @@ export function createAuthor(input: AuthorInput): AuthorDetailDto {
   const insert = db.prepare(`
     INSERT INTO authors (
       name, category, short_biography, philosophy, writing_style, tone,
-      target_audience, preferred_expressions, prohibited_expressions, writing_notes, is_active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      target_audience, preferred_expressions, prohibited_expressions, writing_notes,
+      expertise, perspective, editorial_principles, boundaries, is_active
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = insert.run(
     input.name,
@@ -138,6 +148,10 @@ export function createAuthor(input: AuthorInput): AuthorDetailDto {
     input.preferredExpressions ?? null,
     input.prohibitedExpressions ?? null,
     input.writingNotes ?? null,
+    input.expertise ?? null,
+    input.perspective ?? null,
+    input.editorialPrinciples ?? null,
+    input.boundaries ?? null,
     input.isActive === false ? 0 : 1,
   );
   const authorId = Number(result.lastInsertRowid);
@@ -163,7 +177,8 @@ export function updateAuthor(id: number, input: AuthorInput): AuthorDetailDto | 
     UPDATE authors SET
       name = ?, category = ?, short_biography = ?, philosophy = ?, writing_style = ?,
       tone = ?, target_audience = ?, preferred_expressions = ?, prohibited_expressions = ?,
-      writing_notes = ?, updated_at = datetime('now')
+      writing_notes = ?, expertise = ?, perspective = ?, editorial_principles = ?, boundaries = ?,
+      updated_at = datetime('now')
     WHERE id = ?
   `).run(
     input.name,
@@ -176,6 +191,10 @@ export function updateAuthor(id: number, input: AuthorInput): AuthorDetailDto | 
     input.preferredExpressions ?? null,
     input.prohibitedExpressions ?? null,
     input.writingNotes ?? null,
+    input.expertise ?? null,
+    input.perspective ?? null,
+    input.editorialPrinciples ?? null,
+    input.boundaries ?? null,
     id,
   );
 

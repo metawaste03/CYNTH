@@ -1,9 +1,30 @@
 import { getDatabase } from '../../shared/database/index.js';
+import { countArticlesByStatus } from '../articles/articles.repository.js';
 
 export interface DashboardSummary {
   authors: { total: number; active: number };
   products: { total: number; active: number };
-  articles: { total: number };
+  /**
+   * Article counts by lifecycle state, derived from the `articles` table.
+   *
+   * These are aggregates for the summary cards only. The Dashboard's article
+   * list does not use them — it reads real Article records from
+   * GET /api/articles, because a count cannot be opened, read, or edited.
+   */
+  articles: { total: number; draft: number; published: number };
+  /**
+   * WordPress / CMS integration state (Milestone 13). Real counts from the
+   * `cms_connections` and `article_cms_links` tables — never a placeholder.
+   */
+  wordpress: {
+    /** Configured connections, and how many are active. */
+    connections: number;
+    activeConnections: number;
+    /** Articles that currently exist as a post in at least one CMS. */
+    pushedArticles: number;
+    /** Of those, how many are still drafts over there. The rest a human has acted on. */
+    remoteDrafts: number;
+  };
 }
 
 function count(sql: string): number {
@@ -12,8 +33,10 @@ function count(sql: string): number {
   return row.count;
 }
 
-/** Read-only aggregate counts for the Dashboard. No business logic — just COUNT(*) queries. */
+/** Read-only aggregate counts for the Dashboard. No business logic — COUNT(*) queries and one GROUP BY. */
 export function getDashboardSummary(): DashboardSummary {
+  const byStatus = countArticlesByStatus();
+
   return {
     authors: {
       total: count('SELECT COUNT(*) AS count FROM authors'),
@@ -25,6 +48,14 @@ export function getDashboardSummary(): DashboardSummary {
     },
     articles: {
       total: count('SELECT COUNT(*) AS count FROM articles'),
+      draft: byStatus.draft ?? 0,
+      published: byStatus.published ?? 0,
+    },
+    wordpress: {
+      connections: count('SELECT COUNT(*) AS count FROM cms_connections'),
+      activeConnections: count('SELECT COUNT(*) AS count FROM cms_connections WHERE is_active = 1'),
+      pushedArticles: count('SELECT COUNT(DISTINCT article_id) AS count FROM article_cms_links'),
+      remoteDrafts: count("SELECT COUNT(*) AS count FROM article_cms_links WHERE external_status = 'draft'"),
     },
   };
 }

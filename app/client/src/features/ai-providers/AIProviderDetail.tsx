@@ -8,6 +8,7 @@ import {
   setProviderStatus,
   setDefaultProvider,
   testProviderConnection,
+  syncProviderModels,
   addModel,
   updateModel,
   setModelStatus,
@@ -15,6 +16,8 @@ import {
   deleteModel,
 } from './api';
 import { purposeLabel, PURPOSE_LABELS } from './purposeLabels';
+import { ModelDiscovery } from './ModelDiscovery';
+import { costClassLabel, formatPerMillion } from './pricing';
 import type { ModelPurpose, ProviderDetail as ProviderDetailType, ProviderModel } from '../../shared/types/aiProvider';
 import { ApiError } from '../../shared/services/apiClient';
 import './AIProviderDetail.css';
@@ -91,12 +94,40 @@ export function AIProviderDetail() {
     navigate('/settings/ai-providers', { state: { flash: `${provider.name} was deleted.` } });
   }
 
+  /**
+   * Pulls the provider's model catalogue so Cynth knows what its models cost.
+   * Free/paid classification and every cost estimate depend on this having
+   * been run at least once.
+   */
+  async function handleSyncModels() {
+    setBusy(true);
+    try {
+      const result = await syncProviderModels(Number(id));
+      setTestMessage(
+        `Refreshed from ${result.providerName}: ${result.catalogSize} models in the catalogue ` +
+          `(${result.counts.free} free, ${result.counts.paid} paid, ${result.counts.unknown} with no published pricing). ` +
+          `Updated metadata for ${result.updated} registered model(s). Your purposes and defaults were preserved.` +
+          (result.missingFromCatalog.length
+            ? ` No longer in the catalogue: ${result.missingFromCatalog.join(', ')} — their last known pricing has been kept.`
+            : ''),
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.errors.join(' ') : 'Could not read the provider model catalogue.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleTestConnection() {
     if (!provider) return;
     setBusy(true);
     try {
       const result = await testProviderConnection(provider.id);
       setTestMessage(result.message);
+      // A successful test has just refreshed the catalogue cache, so the
+      // discovery browser below is now showing current data too.
+      await load();
     } catch (err) {
       setTestMessage(err instanceof ApiError ? err.errors.join(' ') : 'Failed to test connection.');
     } finally {
@@ -226,6 +257,11 @@ export function AIProviderDetail() {
           )}
           <button type="button" className="button" onClick={handleTestConnection} disabled={busy}>
             Test Connection
+          </button>
+          {/* Pricing has to come from the provider — Cynth never guesses a
+              cost. A metadata read: it generates nothing and costs nothing. */}
+          <button type="button" className="button" onClick={handleSyncModels} disabled={busy}>
+            Refresh Model Metadata
           </button>
           <Link to={`/settings/ai-providers/${provider.id}/edit`} className="button">
             Edit
@@ -367,6 +403,53 @@ export function AIProviderDetail() {
                       </div>
                     </div>
                     <p className="provider-model-card__purpose">{purposeLabel(model.purpose)}</p>
+
+                    {/* PRICING IS NEVER HIDDEN. A model with no published
+                        price says so plainly — it is treated as paid, and
+                        showing a blank would let it read as free. */}
+                    <dl className="provider-model-card__pricing">
+                      <div>
+                        <dt>Cost</dt>
+                        <dd>
+                          <span className={`cost-badge is-${model.costClass}`}>{costClassLabel(model.costClass)}</span>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Input</dt>
+                        <dd>{formatPerMillion(model.promptPrice)}</dd>
+                      </div>
+                      <div>
+                        <dt>Output</dt>
+                        <dd>{formatPerMillion(model.completionPrice)}</dd>
+                      </div>
+                      <div>
+                        <dt>Context</dt>
+                        <dd>
+                          {model.contextLength
+                            ? `${Math.round(model.contextLength / 1000).toLocaleString()}K tokens`
+                            : 'Not published'}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Vendor</dt>
+                        <dd>{model.vendor ?? 'Not published'}</dd>
+                      </div>
+                      <div>
+                        <dt>Metadata</dt>
+                        <dd>
+                          {model.pricingSyncedAt
+                            ? `Refreshed ${new Date(`${model.pricingSyncedAt.replace(' ', 'T')}Z`).toLocaleDateString()}`
+                            : 'Never refreshed'}
+                        </dd>
+                      </div>
+                    </dl>
+
+                    {model.inCatalog === false && (
+                      <p className="provider-model-card__warning" role="note">
+                        This model is no longer in {provider.name}’s catalogue. Its last known pricing has been kept,
+                        but generation with it may fail.
+                      </p>
+                    )}
                     <div className="provider-model-card__actions">
                       {model.purpose && !model.isDefaultForPurpose && (
                         <button type="button" className="button" onClick={() => handleSetModelDefault(model)}>
@@ -390,6 +473,10 @@ export function AIProviderDetail() {
           </ul>
         )}
       </section>
+
+      {/* Discover -> inspect -> add. No model name is hardcoded in Cynth;
+          everything offered here comes from the provider's live catalogue. */}
+      <ModelDiscovery providerId={provider.id} providerName={provider.name} onModelAdded={load} />
     </div>
   );
 }

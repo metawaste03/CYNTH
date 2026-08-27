@@ -101,3 +101,60 @@ export function validateModelInput(body: unknown): ValidationResult<ModelInput> 
     },
   };
 }
+
+export interface CatalogModelInput {
+  /** The model id exactly as the provider's catalogue publishes it. */
+  modelName: string;
+  displayName: string | null;
+  purpose: string | null;
+  isEnabled: boolean;
+}
+
+/**
+ * Validates a request to save a catalogue model into the registry.
+ *
+ * Note what is deliberately NOT accepted: any pricing or capability field.
+ * The client names a model; the server reads what that model costs from the
+ * provider's own catalogue. Letting a request assert its own prices would
+ * make the entire cost-safety layer bypassable from the browser.
+ */
+export function validateCatalogModelInput(body: unknown): ValidationResult<CatalogModelInput> {
+  const errors: string[] = [];
+
+  if (typeof body !== 'object' || body === null) {
+    return { errors: ['Request body must be an object.'] };
+  }
+  const input = body as Record<string, unknown>;
+
+  const modelName = typeof input.modelName === 'string' ? input.modelName.trim() : '';
+  if (!modelName) errors.push('modelName is required.');
+
+  if (input.displayName !== undefined && input.displayName !== null && typeof input.displayName !== 'string') {
+    errors.push('displayName must be text.');
+  }
+
+  let purpose: string | null = null;
+  if (input.purpose !== undefined && input.purpose !== null && input.purpose !== '') {
+    if (!isValidPurpose(input.purpose)) {
+      errors.push('purpose must be one of the built-in model purposes.');
+    } else {
+      purpose = input.purpose;
+    }
+  }
+
+  if (input.isEnabled !== undefined && typeof input.isEnabled !== 'boolean') {
+    errors.push('isEnabled must be true or false.');
+  }
+
+  if (errors.length) return { errors };
+
+  return {
+    errors: [],
+    value: {
+      modelName,
+      displayName: (input.displayName as string | undefined)?.trim() || null,
+      purpose,
+      isEnabled: input.isEnabled === undefined ? true : (input.isEnabled as boolean),
+    },
+  };
+}

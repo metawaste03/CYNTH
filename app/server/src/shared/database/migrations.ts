@@ -55,6 +55,96 @@ const GENERATION_HISTORY_COLUMNS_TO_ADD: { name: string; type: string }[] = [
   { name: 'duration_ms', type: 'INTEGER' },
 ];
 
+
+/**
+ * Columns added to `articles` for the content architecture (Milestone 10).
+ *
+ * SQLite permits a REFERENCES clause on ADD COLUMN as long as the default is
+ * NULL, so these are real foreign keys rather than loose integers. ON DELETE
+ * SET NULL throughout: retiring a theme or topic must never delete published
+ * work, and an article keeps its own provenance snapshot regardless.
+ */
+const ARTICLE_CONTENT_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'project_id', type: 'INTEGER REFERENCES projects(id) ON DELETE SET NULL' },
+  { name: 'theme_id', type: 'INTEGER REFERENCES themes(id) ON DELETE SET NULL' },
+  { name: 'topic_id', type: 'INTEGER REFERENCES topics(id) ON DELETE SET NULL' },
+  /**
+   * Resolved names captured at generation time, as JSON.
+   *
+   * The foreign keys above are the live relationship; this is the historical
+   * one. Renaming an author or a theme afterwards must not silently rewrite
+   * what an already-generated article says it came from.
+   */
+  { name: 'provenance_snapshot', type: 'TEXT' },
+];
+
+
+/**
+ * Author persona columns (Milestone 11).
+ *
+ * The existing voice fields are reused rather than duplicated — Voice is
+ * writing_style, Tone is tone, Audience is target_audience, Identity is
+ * short_biography, and Writing guidance is writing_notes. Only the four
+ * genuinely missing dimensions are added here.
+ */
+const AUTHOR_PERSONA_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'expertise', type: 'TEXT' },
+  { name: 'perspective', type: 'TEXT' },
+  { name: 'editorial_principles', type: 'TEXT' },
+  { name: 'boundaries', type: 'TEXT' },
+];
+
+/** Editorial guidance on a topic (Milestone 11) — what the topic means and what an article about it should do. */
+const TOPIC_GUIDANCE_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'scope', type: 'TEXT' },
+  { name: 'key_areas', type: 'TEXT' },
+  { name: 'considerations', type: 'TEXT' },
+  { name: 'exclusions', type: 'TEXT' },
+];
+
+
+/**
+ * Model pricing and capability metadata (Milestone 12).
+ *
+ * Populated by syncing a provider's model catalogue — never typed in by hand
+ * and never guessed. Prices are stored per token exactly as the provider
+ * publishes them; NULL means "not known", which the cost layer treats as
+ * "cannot estimate" rather than "free".
+ */
+const AI_MODEL_PRICING_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'prompt_price', type: 'REAL' },
+  { name: 'completion_price', type: 'REAL' },
+  { name: 'context_length', type: 'INTEGER' },
+  /** 1 = both prices are known AND both are zero. Derived at sync time, never assumed. */
+  { name: 'is_free', type: 'INTEGER' },
+  { name: 'pricing_synced_at', type: 'TEXT' },
+];
+
+/** Project-level editorial rules that apply to every article in the project (Milestone 12). User-supplied. */
+const PROJECT_GUIDANCE_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'editorial_guidance', type: 'TEXT' },
+];
+
+/**
+ * Model registry metadata (Milestone 13).
+ *
+ * Everything here is published by the provider's own catalogue and refreshed
+ * by syncing it — none of it is typed in by hand, and none of it is inferred
+ * from a model's name. `vendor` is the upstream house behind a model
+ * (e.g. "anthropic") as distinct from the Cynth provider record used to reach
+ * it (e.g. an OpenRouter account).
+ */
+const AI_MODEL_REGISTRY_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'vendor', type: 'TEXT' },
+  /** A flat per-request charge. Non-zero means the model is not free, whatever its per-token prices say. */
+  { name: 'request_price', type: 'REAL' },
+  { name: 'catalog_status', type: 'TEXT' },
+  /** Capability metadata as JSON. Opaque to Cynth — displayed, never interpreted. */
+  { name: 'capabilities', type: 'TEXT' },
+  /** Whether the provider's catalogue still listed this model at the last sync. */
+  { name: 'in_catalog', type: 'INTEGER' },
+];
+
 function addMissingColumns(db: DatabaseSync, table: string, columns: { name: string; type: string }[]): void {
   const existingColumns = new Set(
     (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as ColumnInfo[]).map((column) => column.name),
@@ -86,5 +176,11 @@ export function runMigrations(db: DatabaseSync): void {
   addMissingColumns(db, 'products', PRODUCT_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_GENERATION_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'articles', ARTICLE_CONTENT_COLUMNS_TO_ADD);
   addMissingColumns(db, 'generation_history', GENERATION_HISTORY_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'authors', AUTHOR_PERSONA_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'topics', TOPIC_GUIDANCE_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'ai_provider_models', AI_MODEL_PRICING_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'projects', PROJECT_GUIDANCE_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'ai_provider_models', AI_MODEL_REGISTRY_COLUMNS_TO_ADD);
 }

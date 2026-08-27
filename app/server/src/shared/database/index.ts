@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { SCHEMA_SQL } from './schema.js';
 import { seedArticleTypes } from './seed.js';
+import { seedInitialProject } from './seedProject.js';
 import { runMigrations } from './migrations.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,9 @@ export interface DatabaseInitResult {
   tables: string[];
   articleTypesSeeded: boolean;
   articleTypesCount: number;
+  /** The initial content project (EveryFiveDays) — seed data, not engine configuration. */
+  projectSeeded: boolean;
+  themeCount: number;
 }
 
 /**
@@ -43,6 +47,10 @@ export function initializeDatabase(): DatabaseInitResult {
 
   const { seeded, count } = seedArticleTypes(db);
 
+  // Seeds the first content project and its thematic areas, only when no
+  // project exists yet. The engine does not require a project to run.
+  const project = seedInitialProject(db);
+
   const tables = (db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     .all() as { name: string }[]
@@ -53,6 +61,8 @@ export function initializeDatabase(): DatabaseInitResult {
     tables,
     articleTypesSeeded: seeded,
     articleTypesCount: count,
+    projectSeeded: project.seeded,
+    themeCount: project.themeCount,
   };
 }
 
