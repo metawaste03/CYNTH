@@ -130,12 +130,31 @@ const providerId = Number(
 const modelId = Number(
   db()
     .prepare(
-      `INSERT INTO ai_provider_models (provider_id, model_name, purpose, is_enabled, is_default_for_purpose,
+      `INSERT INTO ai_provider_models (provider_id, model_name, is_enabled,
         prompt_price, completion_price, is_free)
-       VALUES (?, 'mock-model', 'article_generation', 1, 1, 0, 0, 1)`,
+       VALUES (?, 'mock-model', 1, 0, 0, 1)`,
     )
     .run(providerId).lastInsertRowid,
 );
+
+/**
+ * Registers a model for a purpose.
+ *
+ * Milestone 15 replaced `ai_provider_models.purpose` with the
+ * `ai_model_capabilities` table — a model now holds a SET of capabilities, and
+ * the old column is deprecated and unread. Routing therefore has to come from
+ * here rather than from a column on the model row.
+ */
+function registerCapability(id: number, purpose: string, isDefault = false): void {
+  db()
+    .prepare(
+      `INSERT OR IGNORE INTO ai_model_capabilities (model_id, purpose, is_default_for_purpose)
+       VALUES (?, ?, ?)`,
+    )
+    .run(id, purpose, isDefault ? 1 : 0);
+}
+
+registerCapability(modelId, 'article_generation', true);
 
 function makeDraft(themeId: number | null, topicId: number | null, authorId: number) {
   return articles.createArticleDraft({
@@ -462,6 +481,7 @@ test('MODEL SELECTION: a selected model that cannot run fails — it is never su
       )
       .run(providerId).lastInsertRowid,
   );
+  registerCapability(disabledId, 'article_generation');
 
   const draft = makeDraft(themeA.id, topicA.id, authorA.id);
   const before = providerCalls;
@@ -488,6 +508,7 @@ test('COST SAFETY: choosing a paid model does not bypass the spend gate', async 
       )
       .run(providerId).lastInsertRowid,
   );
+  registerCapability(paidId, 'article_generation');
 
   const draft = makeDraft(themeA.id, topicA.id, authorA.id);
   const before = providerCalls;
@@ -540,6 +561,7 @@ test('PREFLIGHT: previewing a specific model reports that model’s own cost', (
       )
       .run(providerId).lastInsertRowid,
   );
+  registerCapability(paidId, 'article_generation');
 
   const draft = makeDraft(themeA.id, topicA.id, authorA.id);
 

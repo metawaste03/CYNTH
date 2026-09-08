@@ -194,13 +194,30 @@ created on the site.
 
 ## Future Expansion
 
-- **SEO metadata.** `CmsSeoMetadata` is declared in the connector contract and
-  threaded through the payload, and `buildSeoMetadata()` currently returns
-  `null` on purpose. The SEO Engine milestone owns SEO title, meta
-  description, canonical URL, target query, structured data and link
-  recommendations; inventing them now would put fabricated metadata on real
-  posts. When that milestone lands, one function changes and the connector,
-  the payload and the push path already carry the field.
+- **SEO metadata.** ~~Deferred to the SEO Engine milestone.~~ **Resolved
+  (Milestone 14):** `buildSeoMetadata()` now returns real metadata, assembled
+  by `cms/seoAdapter.ts` from values a human owns — metadata the user saved or
+  approved. A proposal nobody accepted is not metadata, unapproved links do
+  not travel, and an article with no SEO metadata still produces `null` so a
+  push cannot overwrite something a human wrote in the CMS with an empty
+  string. Exactly as designed, one function changed and the connector, the
+  payload and the push path already carried the field.
+
+  What is still deferred is the **plugin mapping**. WordPress itself stores
+  none of this: an SEO title and a meta description live in whichever SEO
+  plugin the site runs, under that plugin's own post-meta keys.
+  `SeoFieldMapping` in `cms/seoAdapter.ts` describes how one CMS/plugin
+  combination expects the metadata, and its registry is deliberately empty —
+  writing keys for a plugin that may not be installed would create orphaned
+  post meta nobody reads. Once EveryFiveDays' SEO stack is chosen, one mapping
+  is registered there and applied in the connector, and nothing else in Cynth
+  changes.
+- **The SEO gate.** Since Milestone 14 a push is gated: `CYNTH Draft → SEO
+  Analysis → SEO Findings → User Review → SEO Ready → WordPress Draft`. The
+  gate is evaluated in `cmsPublish.service.ts` before any network call, its
+  criteria are configurable (including switching enforcement off), and a
+  refusal is recorded in the push history like any other. See
+  [10_SEO_ENGINE.md](10_SEO_ENGINE.md).
 - **Categories, tags and featured images.** Not mapped, for the same reason:
   Cynth has no authoritative value for them yet.
 - **Further CMS connectors.** The registry is ready; nothing above the
@@ -213,3 +230,5 @@ created on the site.
 - ~~TODO: Define what publish states exist and how Cynth maps to them.~~ **Resolved:** Cynth writes only `draft`. It *reads* WordPress's other statuses to know when to refuse an update, but never writes them.
 - TODO: Define rollback/undo expectations if a publish needs to be reversed. *Currently out of scope: Cynth cannot publish, so it has nothing to reverse. Reverting a live post is done in WordPress.*
 - TODO: Decide whether Cynth should map categories, tags, or a featured image once it holds authoritative values for them.
+- TODO: Choose EveryFiveDays' WordPress SEO plugin, then register one `SeoFieldMapping` for it in `cms/seoAdapter.ts`. Until then no plugin fields are written, which is the only honest behaviour.
+- TODO: Record the slug a post was created with in `article_cms_links`, so the SEO engine's slug-stability check compares against the live URL rather than against Cynth's current slug.

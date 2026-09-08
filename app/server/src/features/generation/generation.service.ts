@@ -4,15 +4,14 @@ import { getArticleTypeById } from '../article-types/article-types.repository.js
 import { getAuthorById } from '../authors/authors.repository.js';
 import { getProductById } from '../products/products.repository.js';
 import { buildPrompt } from '../prompt-builder/promptBuilder.service.js';
-import { routeForModel, routeForPurpose } from '../model-router/modelRouter.service.js';
-import type { ModelRouteResult } from '../model-router/modelRouter.service.js';
-import { getProviderApiKey } from '../ai-providers/aiProviders.repository.js';
-import { getAdapter } from './providers/index.js';
-import type { ProviderAdapter, TokenUsage } from './generation.types.js';
+import { resolveProviderTarget } from './providerTarget.service.js';
+import type { TokenUsage } from './generation.types.js';
 import { GenerationError, isGenerationError, redactSecrets, truncateForDisplay } from './generation.errors.js';
 import { GENERATION_TIMEOUT_MS } from './generation.constants.js';
 import { parseGeneratedArticle } from './generation.parse.js';
 import { recordGeneration } from './generationHistory.repository.js';
+import { recordPlacements, resolveProductIdsForArticle } from '../articles/articleProducts.repository.js';
+import { scanProductPlacements, stripInvalidMarkers } from '../articles/productPlacement.js';
 import {
   ASSUMED_COMPLETION_TOKENS,
   classifyModel,
@@ -49,109 +48,6 @@ export class DraftNotReadyError extends Error {
     this.name = 'DraftNotReadyError';
     this.errors = errors;
   }
-}
-
-interface ResolvedTarget {
-  providerName: string;
-  providerType: string;
-  baseUrl: string | null;
-  modelName: string;
-  adapter: ProviderAdapter;
-  /** Server-side only. Never returned by a route, never logged, never persisted. */
-  apiKey: string;
-}
-
-interface TargetResolution {
-  /** Display-safe routing info, present whenever the router found a provider/model at all. */
-  route: ModelRouteResult | null;
-  target: ResolvedTarget | null;
-  /** The first blocking problem, if any — thrown by generation, listed by preflight. */
-  error: GenerationError | null;
-}
-
-/**
- * Asks the Model Router which provider/model handles this task, then checks
- * everything a request needs: a supported adapter, a model name, and a key
- * that is actually present. Returns rather than throws, so the preflight
- * check can report the same problem the generation call would hit, before
- * anything is sent.
- *
- * `modelId` is an explicit user selection. When it is given, that model is
- * resolved and no other — a selected model that cannot run produces an error,
- * never a substitution.
- */
-function resolveGenerationTarget(taskType: string, modelId?: number | null): TargetResolution {
-  const routed = modelId ? routeForModel(taskType, modelId) : routeForPurpose(taskType);
-
-  if ('errors' in routed) {
-    return {
-      route: null,
-      target: null,
-      error: new GenerationError('invalid_configuration', 'Unknown generation task type.'),
-    };
-  }
-
-  if (!routed.configured || !routed.provider || !routed.model) {
-    const reason = routed.reason ? `${routed.reason} ` : '';
-    return {
-      route: routed,
-      target: null,
-      error: new GenerationError(
-        'provider_not_configured',
-        modelId
-          ? `The selected model cannot be used. ${reason}Choose another model, or fix it in Settings then AI Providers.`
-          : `No model is configured for Article Generation. ${reason}Open Settings then AI Providers, and set a default model for this task.`,
-      ),
-    };
-  }
-
-  const adapter = getAdapter(routed.provider.providerType);
-  if (!adapter) {
-    return {
-      route: routed,
-      target: null,
-      error: new GenerationError(
-        'unsupported_provider',
-        `Cynth has no adapter for provider type "${routed.provider.providerType}". Supported types are OpenRouter, Anthropic, and OpenAI.`,
-      ),
-    };
-  }
-
-  if (!routed.model.modelName.trim()) {
-    return {
-      route: routed,
-      target: null,
-      error: new GenerationError(
-        'missing_model',
-        'The configured provider has no model name set. Add one in Settings then AI Providers.',
-      ),
-    };
-  }
-
-  const apiKey = getProviderApiKey(routed.provider.id);
-  if (!apiKey) {
-    return {
-      route: routed,
-      target: null,
-      error: new GenerationError(
-        'missing_api_key',
-        `No API key is stored for "${routed.provider.name}". Add one in Settings then AI Providers.`,
-      ),
-    };
-  }
-
-  return {
-    route: routed,
-    error: null,
-    target: {
-      providerName: routed.provider.name,
-      providerType: routed.provider.providerType,
-      baseUrl: routed.provider.baseUrl,
-      modelName: routed.model.modelName,
-      adapter,
-      apiKey,
-    },
-  };
 }
 
 /* ---------------------------------------------------------------- preflight */
@@ -216,7 +112,7 @@ export function getGenerationPreflight(
   const promptOk = !('errors' in built);
   if (!promptOk) issues.push(...(built as { errors: string[] }).errors);
 
-  const resolution = resolveGenerationTarget(taskType, modelId);
+  const resolution = resolveProviderTarget(taskType, modelId, 'Article Generation');
   if (resolution.error) issues.push(resolution.error.message);
 
   // COST SAFETY: the same decision the generate endpoint will make, surfaced
@@ -327,7 +223,7 @@ export async function generateArticle(
   const built = buildPrompt(articleId);
   if ('errors' in built) throw new DraftNotReadyError(built.errors);
 
-  const resolution = resolveGenerationTarget(taskType, options.modelId);
+  const resolution = resolveProviderTarget(taskType, options.modelId, 'Article Generation');
   if (resolution.error) {
     recordGeneration({
       articleId,
@@ -404,15 +300,32 @@ export async function generateArticle(
       );
     }
 
+    // PRODUCT PLACEMENT (Milestone 17). Read out of what the author actually
+    // wrote, before the draft is saved, so the stored body and the recorded
+    // placements can never disagree. Markers naming a product that was not
+    // offered are dropped here rather than reaching a reader.
+    const attachedProductIds = resolveProductIdsForArticle(articleId);
+    const scan = scanProductPlacements(parsed.body, attachedProductIds);
+    const body = attachedProductIds.length ? stripInvalidMarkers(parsed.body, attachedProductIds) : parsed.body;
+
     const generation = saveGeneratedArticle(articleId, {
       title: parsed.title,
-      content: parsed.body,
+      content: body,
       provider: target.providerName,
       model: target.modelName,
       promptVersion: built.promptVersion,
       generationMode: spend.mode,
     });
     if (!generation) throw new DraftNotFoundError('Draft not found.');
+
+    // Where each product ended up, including the ones the author judged did
+    // not belong anywhere — 'omitted' is recorded as the real outcome it is.
+    if (attachedProductIds.length) {
+      recordPlacements(
+        articleId,
+        scan.placements.map((placement) => ({ productId: placement.productId, section: placement.section })),
+      );
+    }
 
     const historyId = recordGeneration({
       articleId,

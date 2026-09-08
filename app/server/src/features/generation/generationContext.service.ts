@@ -2,7 +2,9 @@ import { getArticleById } from '../articles/articles.repository.js';
 import type { ArticleDraftDto } from '../articles/articles.repository.js';
 import { getArticleTypeById } from '../article-types/article-types.repository.js';
 import { getAuthorById } from '../authors/authors.repository.js';
+import { listActiveSharedSkills, listActiveSkillsForAuthor } from '../authors/authorSkills.repository.js';
 import { getProductById } from '../products/products.repository.js';
+import { listArticleProducts, resolveProductIdsForArticle } from '../articles/articleProducts.repository.js';
 import { getProjectById, getThemeById, getTopicById } from '../content/content.repository.js';
 
 /**
@@ -23,6 +25,20 @@ import { getProjectById, getThemeById, getTopicById } from '../content/content.r
  * and the omitted sections do not appear in the prompt. Cynth never
  * substitutes invented editorial content for a field the user left empty.
  */
+
+/**
+ * A long-form authoring document, carried verbatim (Milestone 16).
+ *
+ * The persona fields below describe an author in a fixed shape. A skill is the
+ * same identity written as prose, and it reaches the model unmodified — Cynth
+ * neither summarises it nor extracts fields from it.
+ */
+export interface AuthorSkillContext {
+  id: number;
+  name: string;
+  /** Markdown, exactly as stored. */
+  body: string;
+}
 
 /** Who the model is writing as. Assembled from the author record's persona fields. */
 export interface AuthorPersonaContext {
@@ -46,6 +62,47 @@ export interface AuthorPersonaContext {
   preferredExpressions: string | null;
   prohibitedExpressions: string | null;
   writingSamples: { title: string; text: string | null }[];
+  /** The author's own skill documents, in assembly order. Empty when they have none. */
+  skills: AuthorSkillContext[];
+}
+
+/**
+ * A product the user attached to this article, with what research learned
+ * about it (Milestone 17).
+ *
+ * `affiliateUrl` is present because the card is rendered from this context —
+ * but it is deliberately NOT put in the prompt: the model has no use for a
+ * tracking URL, and a link it never sees is a link it cannot alter.
+ */
+export interface ArticleProductContext {
+  productId: number;
+  title: string;
+  brand: string | null;
+  category: string | null;
+  /** The user's link, verbatim. Used when rendering the card, never sent to a model. */
+  affiliateUrl: string | null;
+  /**
+   * Which retailer the link points at, derived from the source URL's host.
+   *
+   * Used only to label the card's button honestly — "Shop on Amazon" when it
+   * is Amazon, a neutral label otherwise. Never a filter, and never sent to a
+   * model.
+   */
+  vendor: string | null;
+  imageUrl: string | null;
+  description: string | null;
+  /** What research established this product is for. Null when it has not been researched. */
+  useCase: string | null;
+  problemSolved: string | null;
+  bestFor: string | null;
+  keyFeatures: string[];
+  /** Why the editor attached it, in their words. The strongest placement signal when present. */
+  editorialNote: string | null;
+  editorialFit: string | null;
+  /** The thematic area this product belongs to (Milestone 18). Context for relevance, never a filter. */
+  themeName: string | null;
+  /** True when the product's area differs from the article's. Stated, not acted on. */
+  themeMatchesArticle: boolean | null;
 }
 
 /** What the topic means and what an article about it should do. */
@@ -66,8 +123,21 @@ export interface GenerationContext {
   theme: { id: number; name: string; description: string | null } | null;
   topic: TopicContext | null;
   author: AuthorPersonaContext | null;
+  /**
+   * Skill documents that apply to every author, whoever is writing. Resolved
+   * once per article rather than per author, since that is what "shared" means.
+   */
+  sharedSkills: AuthorSkillContext[];
   articleType: { id: number; name: string; description: string | null } | null;
   product: { title: string; brand: string | null; description: string | null; editorialFit: string | null } | null;
+  /**
+   * Every product attached to this article, researched or not (Milestone 17).
+   *
+   * Supersedes the single `product` above, which is kept because drafts
+   * created before `article_products` existed still carry one. A product
+   * recorded both ways appears here once.
+   */
+  products: ArticleProductContext[];
   article: {
     workingTitle: string | null;
     /** The legacy free-text topic field, kept for drafts predating the Topic entity. */
@@ -105,6 +175,13 @@ function personaFrom(authorId: number): AuthorPersonaContext | null {
     preferredExpressions: author.preferredExpressions,
     prohibitedExpressions: author.prohibitedExpressions,
     writingSamples: author.writingSamples.map((s) => ({ title: s.title, text: s.fullText })),
+    // Only active documents; deactivating a skill is how the user takes it out
+    // of generation without deleting it.
+    skills: listActiveSkillsForAuthor(authorId).map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      body: skill.body,
+    })),
   };
 }
 
@@ -116,6 +193,49 @@ export function buildGenerationContext(articleId: number): GenerationContext | n
   const article = getArticleById(articleId);
   if (!article) return null;
   return contextFromArticle(article);
+}
+
+/**
+ * Resolves every product attached to an article into placement context.
+ *
+ * An uploaded primary image wins over the one the source page published: the
+ * editor's own asset is always preferred to a retailer's CDN.
+ */
+function productsFor(articleId: number, articleThemeId: number | null): ArticleProductContext[] {
+  const noteByProductId = new Map(
+    listArticleProducts(articleId).map((row) => [row.productId, row.editorialNote]),
+  );
+
+  return resolveProductIdsForArticle(articleId)
+    .map((productId): ArticleProductContext | null => {
+      const product = getProductById(productId);
+      if (!product) return null;
+
+      const uploaded = product.images.find((image) => image.isPrimary) ?? product.images[0] ?? null;
+
+      return {
+        productId: product.id,
+        title: product.title,
+        brand: product.brand,
+        category: product.category,
+        affiliateUrl: product.affiliateLink,
+        vendor: product.vendor,
+        imageUrl: uploaded?.url ?? product.sourceImageUrl,
+        description: product.shortDescription ?? product.description,
+        useCase: product.useCase,
+        problemSolved: product.problemSolved,
+        bestFor: product.bestFor,
+        keyFeatures: product.keyFeatures,
+        editorialNote: noteByProductId.get(product.id) ?? null,
+        editorialFit: product.editorialFit,
+        themeName: product.themeName,
+        // Null when either side has no area — an unknown is not a mismatch,
+        // and the prompt says so rather than implying one.
+        themeMatchesArticle:
+          product.themeId === null || articleThemeId === null ? null : product.themeId === articleThemeId,
+      };
+    })
+    .filter((entry): entry is ArticleProductContext => entry !== null);
 }
 
 export function contextFromArticle(article: ArticleDraftDto): GenerationContext {
@@ -149,6 +269,11 @@ export function contextFromArticle(article: ArticleDraftDto): GenerationContext 
         }
       : null,
     author: article.authorId ? personaFrom(article.authorId) : null,
+    sharedSkills: listActiveSharedSkills().map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      body: skill.body,
+    })),
     articleType: articleType
       ? { id: articleType.id, name: articleType.name, description: articleType.description }
       : null,
@@ -160,6 +285,7 @@ export function contextFromArticle(article: ArticleDraftDto): GenerationContext 
           editorialFit: product.editorialFit,
         }
       : null,
+    products: productsFor(article.id, article.themeId ?? null),
     article: {
       workingTitle: article.title,
       topicText: article.topic,

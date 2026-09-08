@@ -7,14 +7,31 @@ export class ApiError extends Error {
   code: string | null;
   /** Whether the server says repeating the identical request could succeed. Cynth never retries on its own — this only decides whether a Retry button is offered. */
   retryable: boolean;
+  /**
+   * The rest of the error body, for endpoints that return structure alongside
+   * their message (Milestone 15).
+   *
+   * Model validation is the reason this exists: a refused model comes back
+   * with a per-stage report, and collapsing that into an `errors` array would
+   * throw away the one thing that makes the failure actionable — WHICH stage
+   * failed. Anything not in `errors`, `code` or `retryable` survives here.
+   */
+  details: Record<string, any> | null;
 
-  constructor(status: number, errors: string[], code: string | null = null, retryable = false) {
+  constructor(
+    status: number,
+    errors: string[],
+    code: string | null = null,
+    retryable = false,
+    details: Record<string, any> | null = null,
+  ) {
     const resolved = errors.length ? errors : [describeBareStatus(status)];
     super(resolved.join(' '));
     this.status = status;
     this.errors = resolved;
     this.code = code;
     this.retryable = retryable;
+    this.details = details;
   }
 }
 
@@ -59,6 +76,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
       Array.isArray(data.errors) ? data.errors : [],
       typeof data.code === 'string' ? data.code : null,
       data.retryable === true,
+      data && typeof data === 'object' ? (data as Record<string, any>) : null,
     );
   }
 

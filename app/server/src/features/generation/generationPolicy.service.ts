@@ -57,6 +57,14 @@ export interface PricedModel {
   completionPrice: number | null;
   /** A flat per-request charge, where the catalogue publishes one. */
   requestPrice?: number | null;
+  /**
+   * The price of image output, where the catalogue publishes one.
+   *
+   * Optional because most models have none. Where it exists it is decisive:
+   * an image model can publish zero per-token prices and still charge for
+   * every image, so a classification that ignored this would call it free.
+   */
+  imageOutputPrice?: number | null;
 }
 
 /**
@@ -72,18 +80,25 @@ export interface PricedModel {
  *      Cynth does not know, and an unknown price is treated as paid
  *      everywhere downstream.
  *
- * A model is free only when its input AND output prices are both known and
- * both zero — and, where the catalogue publishes a flat per-request charge,
- * when that is zero too. A per-request charge is a real charge.
+ * A model is free only when EVERY price the catalogue publishes for it is
+ * known and zero — the per-token prices, any flat per-request charge, and any
+ * image-output charge. Each of those is a real charge on its own.
  */
 export function classifyModel(model: PricedModel): ModelCostClass {
   const { promptPrice, completionPrice } = model;
   if (promptPrice === null || completionPrice === null) return 'unknown';
 
-  const requestPrice = model.requestPrice;
-  // Absent is fine (not every catalogue publishes one); present-but-non-zero
-  // is a charge and makes the model paid.
-  if (requestPrice !== null && requestPrice !== undefined && requestPrice !== 0) return 'paid';
+  // Absent is fine (not every catalogue publishes these); present-but-non-zero
+  // is a charge and makes the model paid, whatever the per-token prices say.
+  //
+  // The image price is here because of a real model: OpenRouter lists
+  // Seedream 4.5 with prompt 0, completion 0 and image output at $9.58/M
+  // tokens. Classifying on the first two alone called a model that charges
+  // for every image "free", which would have let it run in Test mode and skip
+  // the cost confirmation entirely.
+  for (const extra of [model.requestPrice, model.imageOutputPrice]) {
+    if (extra !== null && extra !== undefined && extra !== 0) return 'paid';
+  }
 
   return promptPrice === 0 && completionPrice === 0 ? 'free' : 'paid';
 }

@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { addModelFromCatalog, discoverModels } from './api';
+import { addModelFromCatalog, discoverModels, fetchProviderMeta } from './api';
 import { purposeLabel, PURPOSE_LABELS } from './purposeLabels';
+import { ModelValidationReport } from './ModelValidationReport';
 import { formatPerMillion, costClassLabel } from './pricing';
-import type { CatalogFilter, CatalogModel, CatalogResult, ModelPurpose } from '../../shared/types/aiProvider';
+import type {
+  CatalogFilter,
+  CatalogModel,
+  CatalogResult,
+  ModelPurpose,
+  ModelValidationResult,
+} from '../../shared/types/aiProvider';
 import { ApiError } from '../../shared/services/apiClient';
 import './ModelDiscovery.css';
 
@@ -60,10 +67,34 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
   const [flash, setFlash] = useState<string | null>(null);
 
   const [inspectedId, setInspectedId] = useState<string | null>(null);
-  const [purposeById, setPurposeById] = useState<Record<string, ModelPurpose | ''>>({});
+  /** The capability SET chosen for each catalogue entry — a model may hold several. */
+  const [purposesById, setPurposesById] = useState<Record<string, ModelPurpose[]>>({});
   const [addingId, setAddingId] = useState<string | null>(null);
+  /** The last validation report, so a refused model explains itself instead of just failing. */
+  const [validationById, setValidationById] = useState<Record<string, ModelValidationResult>>({});
 
-  const purposes = useMemo(() => Object.keys(PURPOSE_LABELS) as ModelPurpose[], []);
+  /**
+   * The capability list comes from the SERVER, not from the label map.
+   *
+   * The map is fallback wording only. Deriving the list from it meant a
+   * capability added on the server was assignable everywhere except here —
+   * which is exactly how Featured Image Generation ended up invisible on the
+   * one screen where a new model is added.
+   */
+  const [serverPurposes, setServerPurposes] = useState<ModelPurpose[] | null>(null);
+  useEffect(() => {
+    fetchProviderMeta()
+      .then((meta) => {
+        const values = (meta.capabilities ?? []).map((capability) => capability.value as ModelPurpose);
+        if (values.length) setServerPurposes(values);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const purposes = useMemo(
+    () => serverPurposes ?? (Object.keys(PURPOSE_LABELS) as ModelPurpose[]),
+    [serverPurposes],
+  );
 
   const load = useCallback(
     async (options: { refresh?: boolean } = {}) => {
@@ -98,15 +129,33 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
     return () => window.clearTimeout(timer);
   }, [load, search]);
 
+  /**
+   * ADD MODEL — validated first, saved second.
+   *
+   * The server runs the full pipeline before writing anything, so a refusal
+   * here means nothing was saved. A 422 carries the per-stage report, which
+   * is rendered rather than collapsed into "Request Failed": the whole point
+   * is that "your Base URL points at the website" and "that model id does not
+   * exist" are different problems with different fixes.
+   */
   async function handleAdd(model: CatalogModel) {
     setAddingId(model.id);
     setError(null);
+    setValidationById((prev) => {
+      const next = { ...prev };
+      delete next[model.id];
+      return next;
+    });
+
     try {
       const outcome = await addModelFromCatalog(providerId, {
         modelName: model.id,
-        purpose: purposeById[model.id] || undefined,
+        purposes: purposesById[model.id] ?? [],
       });
       setFlash(outcome.message);
+      if (outcome.validation) {
+        setValidationById((prev) => ({ ...prev, [model.id]: outcome.validation! }));
+      }
       onModelAdded();
       // Reflect the new registered state without a full re-fetch.
       setResult((prev) =>
@@ -115,7 +164,23 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
           : prev,
       );
     } catch (err) {
-      setError(err instanceof ApiError ? err.errors.join(' ') : 'Could not add that model.');
+      if (err instanceof ApiError && err.status === 422 && err.details?.stages) {
+        setValidationById((prev) => ({
+          ...prev,
+          [model.id]: {
+            ok: false,
+            code: err.code,
+            message: err.errors.join(' '),
+            failedStage: err.details!.failedStage ?? null,
+            stages: err.details!.stages ?? [],
+            costClass: model.costClass,
+            liveProbeRan: false,
+            probe: null,
+          },
+        }));
+      } else {
+        setError(err instanceof ApiError ? err.errors.join(' ') : 'Could not add that model.');
+      }
     } finally {
       setAddingId(null);
     }
@@ -246,6 +311,15 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
                   <dt>Output</dt>
                   <dd>{formatPerMillion(model.completionPrice)}</dd>
                 </div>
+                {/* Only when there is one — but when there is one it is often
+                    the only price the model has, and its absence is what made
+                    "Paid" look like a mistake. */}
+                {model.imageOutputPrice !== null && (
+                  <div>
+                    <dt>Image output</dt>
+                    <dd>{formatPerMillion(model.imageOutputPrice)}</dd>
+                  </div>
+                )}
               </dl>
 
               <div className="catalog-model__actions">
@@ -258,22 +332,31 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
                   {isInspected ? 'Hide details' : 'Inspect'}
                 </button>
 
-                <label className="catalog-model__purpose">
-                  <span className="visually-hidden">Purpose for {model.id}</span>
-                  <select
-                    value={purposeById[model.id] ?? ''}
-                    onChange={(event) =>
-                      setPurposeById((prev) => ({ ...prev, [model.id]: event.target.value as ModelPurpose | '' }))
-                    }
-                  >
-                    <option value="">No purpose set</option>
-                    {purposes.map((purpose) => (
-                      <option key={purpose} value={purpose}>
+                {/* A capability SET, not a single purpose: one model may
+                    legitimately write articles AND review SEO. */}
+                <div className="catalog-model__capabilities">
+                  <span className="visually-hidden">Capabilities for {model.id}</span>
+                  {purposes.map((purpose) => {
+                    const chosen = purposesById[model.id] ?? [];
+                    return (
+                      <label key={purpose} className="catalog-model__capability">
+                        <input
+                          type="checkbox"
+                          checked={chosen.includes(purpose)}
+                          onChange={(event) =>
+                            setPurposesById((prev) => ({
+                              ...prev,
+                              [model.id]: event.target.checked
+                                ? [...chosen, purpose]
+                                : chosen.filter((value) => value !== purpose),
+                            }))
+                          }
+                        />
                         {purposeLabel(purpose)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                      </label>
+                    );
+                  })}
+                </div>
 
                 <button
                   type="button"
@@ -282,12 +365,14 @@ export function ModelDiscovery({ providerId, providerName, onModelAdded }: Model
                   disabled={addingId === model.id}
                 >
                   {addingId === model.id
-                    ? 'Saving…'
+                    ? 'Validating…'
                     : model.isRegistered
-                      ? 'Refresh in Registry'
-                      : 'Add to Registry'}
+                      ? 'Re-validate & Refresh'
+                      : 'Validate & Add'}
                 </button>
               </div>
+
+              {validationById[model.id] && <ModelValidationReport result={validationById[model.id]} />}
 
               {isInspected && (
                 <div className="catalog-model__details">

@@ -1,10 +1,12 @@
 import { api } from '../../shared/services/apiClient';
 import type {
+  CapabilityMeta,
   CatalogFilter,
   CatalogModel,
   CatalogResult,
   ModelPurpose,
   ModelInput,
+  ModelValidationResult,
   Provider,
   ProviderDetail,
   ProviderInput,
@@ -15,6 +17,8 @@ import type {
 export interface ProviderMeta {
   providerTypes: readonly string[];
   purposes: readonly ModelPurpose[];
+  /** Capabilities with the server's own labels and whether any workflow routes to them yet. */
+  capabilities: CapabilityMeta[];
 }
 
 export function fetchProviderMeta(): Promise<ProviderMeta> {
@@ -80,8 +84,90 @@ export function setModelStatus(providerId: number, modelId: number, isEnabled: b
     .then((r) => r.model);
 }
 
-export function setModelDefault(providerId: number, modelId: number): Promise<ProviderModel> {
-  return api.patch<{ model: ProviderModel }>(`/ai-providers/${providerId}/models/${modelId}/default`, {}).then((r) => r.model);
+/**
+ * Makes a model the system default for ONE of its capabilities.
+ *
+ * The purpose is required: a model that writes articles AND reviews SEO has
+ * two independent default questions, and picking one on the user's behalf
+ * would silently reassign a default they never touched.
+ */
+export function setModelDefault(
+  providerId: number,
+  modelId: number,
+  purpose: ModelPurpose,
+): Promise<ProviderModel> {
+  return api
+    .patch<{ model: ProviderModel }>(`/ai-providers/${providerId}/models/${modelId}/default`, { purpose })
+    .then((r) => r.model);
+}
+
+/** Adds one capability without disturbing the others the model holds. */
+export function addModelCapability(
+  providerId: number,
+  modelId: number,
+  purpose: ModelPurpose,
+): Promise<ProviderModel> {
+  return api
+    .post<{ model: ProviderModel }>(`/ai-providers/${providerId}/models/${modelId}/capabilities`, { purpose })
+    .then((r) => r.model);
+}
+
+/**
+ * Removes one capability.
+ *
+ * If it was the system default for that purpose, the purpose is left with NO
+ * default rather than another model being promoted into the role.
+ */
+export function removeModelCapability(
+  providerId: number,
+  modelId: number,
+  purpose: ModelPurpose,
+): Promise<ProviderModel> {
+  return api
+    .delete<{ model: ProviderModel }>(`/ai-providers/${providerId}/models/${modelId}/capabilities/${purpose}`)
+    .then((r) => r.model);
+}
+
+/**
+ * VALIDATE WITHOUT SAVING.
+ *
+ * Runs the full pipeline — configuration, endpoint, credential, catalogue,
+ * and (with permission, or on a free model) one minimal live request — and
+ * reports every stage. Writes nothing either way.
+ */
+export function validateModel(
+  providerId: number,
+  input: { modelName: string; confirmLiveTest?: boolean },
+): Promise<ModelValidationResult> {
+  return api.post<ModelValidationResult>(`/ai-providers/${providerId}/validate-model`, input);
+}
+
+export interface ModelTestResult {
+  ok: boolean;
+  tested: boolean;
+  model?: ProviderModel;
+  validation?: ModelValidationResult;
+  estimatedProbeCost?: number | null;
+  costClass?: string;
+}
+
+/**
+ * TEST MODEL.
+ *
+ * Sends the smallest request that establishes the endpoint answers, the key
+ * authenticates, the model runs and the response parses. It does NOT create
+ * an article: the prompt is four words and the output is capped at a handful
+ * of tokens.
+ *
+ * A free model is tested outright. A paid one needs `confirmLiveTest`, and
+ * without it the request comes back as a 402 carrying the estimated cost.
+ */
+export function testModel(
+  providerId: number,
+  modelId: number,
+  confirmLiveTest = false,
+): Promise<ModelTestResult> {
+  return api.post<ModelTestResult>(`/ai-providers/${providerId}/models/${modelId}/test`, { confirmLiveTest });
 }
 
 export function deleteModel(providerId: number, modelId: number): Promise<void> {
@@ -153,6 +239,8 @@ export interface AddFromCatalogResult {
   /** False when the model was already registered and was refreshed instead of duplicated. */
   created: boolean;
   message: string;
+  /** What validation established before the model was saved. */
+  validation?: ModelValidationResult;
 }
 
 /**
@@ -164,12 +252,27 @@ export interface AddFromCatalogResult {
  */
 export function addModelFromCatalog(
   providerId: number,
-  input: { modelName: string; displayName?: string; purpose?: ModelPurpose | ''; isEnabled?: boolean },
+  input: {
+    modelName: string;
+    displayName?: string;
+    purposes?: ModelPurpose[];
+    isEnabled?: boolean;
+    /** Permission to send one minimal, chargeable request as part of validating. */
+    confirmLiveTest?: boolean;
+  },
 ): Promise<AddFromCatalogResult> {
   return api.post<AddFromCatalogResult>(`/ai-providers/${providerId}/models/from-catalog`, input);
 }
 
-/** Every model that could serve a generation task, across all active providers. */
-export function fetchSelectableModels(): Promise<SelectableModel[]> {
-  return api.get<{ models: SelectableModel[] }>('/ai-providers/selectable-models').then((r) => r.models);
+/**
+ * The models that may serve a task.
+ *
+ * PURPOSE FILTERING (Milestone 15). Pass a purpose and only the models
+ * registered for it come back — the New Article workflow asks for
+ * article_generation, the SEO workflow asks for seo_review, and neither is
+ * offered the other's models. Omit it to see the whole registry.
+ */
+export function fetchSelectableModels(purpose?: ModelPurpose): Promise<SelectableModel[]> {
+  const query = purpose ? `?purpose=${encodeURIComponent(purpose)}` : '';
+  return api.get<{ models: SelectableModel[] }>(`/ai-providers/selectable-models${query}`).then((r) => r.models);
 }

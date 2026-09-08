@@ -58,6 +58,26 @@ export interface CmsLinkRecommendation {
   approved: boolean;
 }
 
+/**
+ * An image Cynth holds locally and wants the CMS to carry.
+ *
+ * A path plus its metadata rather than bytes: the file is already on disk in
+ * Cynth's media library, and reading a multi-megabyte image into every payload
+ * — including the ones the preview screen builds purely to show the user what
+ * would be sent — would be waste. The connector reads it at the moment it
+ * uploads, and only then.
+ */
+export interface CmsDraftImage {
+  /** Absolute path to the file in Cynth's uploads directory. */
+  filePath: string;
+  /** Filename to present to the CMS. */
+  filename: string;
+  mimeType: string;
+  /** Alt text as the editor wrote it. Null when none was written — never invented. */
+  altText: string | null;
+  title: string | null;
+}
+
 /** What Cynth hands a connector to create or update a draft. */
 export interface CmsDraftPayload {
   title: string;
@@ -75,6 +95,12 @@ export interface CmsDraftPayload {
   status: 'draft';
   /** The remote user posts are attributed to, when the user configured a mapping. Null means "whoever Cynth authenticates as". */
   remoteAuthorId: string | null;
+  /**
+   * The article's featured image, when the editor has chosen one. Null when
+   * the article has none — the CMS then keeps whatever it already had, rather
+   * than having its featured image cleared by an absent value.
+   */
+  featuredImage: CmsDraftImage | null;
   /** Reserved for the SEO milestone. Always null today. */
   seo: CmsSeoMetadata | null;
 }

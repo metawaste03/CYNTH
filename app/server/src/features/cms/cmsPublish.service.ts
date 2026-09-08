@@ -6,11 +6,23 @@ import { CmsError, isCmsError, sanitizeCmsMessage } from './cms.errors.js';
 import type {
   CmsCallContext,
   CmsConnector,
+  CmsDraftImage,
   CmsDraftPayload,
   CmsRemotePost,
   CmsSeoMetadata,
 } from './cms.types.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import { getAuthorById } from '../authors/authors.repository.js';
+import { getFeaturedImage } from '../media/media.repository.js';
+import { MEDIA_IMAGES_DIR } from '../media/media.upload.js';
 import { articleBodyToHtml } from './articleMarkup.js';
+import { buildGenerationContext } from '../generation/generationContext.service.js';
+import { buildCmsSeoMetadata } from './seoAdapter.js';
+import { evaluateSeoGate, getGateCriteria } from '../seo/seoGate.service.js';
+import { getArticleSeo, getLatestAnalysisRun, listFindingsForAnalysis } from '../seo/seo.repository.js';
+import { contentFingerprint } from '../seo/seoAnalysis.service.js';
+import type { SeoGateDecision } from '../seo/seo.types.js';
 import {
   getConnectionById,
   getConnectionSecret,
@@ -105,19 +117,23 @@ function resolveTarget(connectionId: number | null): ResolvedTarget {
 /* ---------------------------------------------------------------- mapping --- */
 
 /**
- * SEO metadata for a push.
+ * SEO metadata for a push (Milestone 14).
  *
- * Deliberately always null. The SEO Engine milestone owns SEO title, meta
- * description, canonical URL, target query and structured data; inventing
- * them here would put fabricated metadata on real posts, and a value Cynth
- * made up is worse than no value at all.
+ * The slot Milestone 13 left open is now filled by the SEO engine, exactly as
+ * intended: one implementation changed and the connector, the payload and the
+ * push path were already carrying the field.
  *
- * This function exists so that when the SEO engine lands, one implementation
- * changes and the connector, the payload and the push path all already carry
- * the field.
+ * What reaches a CMS is still only what a human owns — metadata the user
+ * saved or approved. A model's proposal that has not been accepted is not
+ * metadata, and nothing Cynth invented is sent. An article with no SEO
+ * metadata still produces null, so a push cannot overwrite something a human
+ * wrote in the CMS with an empty string.
+ *
+ * See seoAdapter.ts for the CMS-independent mapping and for why no SEO plugin
+ * is named anywhere.
  */
-function buildSeoMetadata(_article: ArticleDraftDto): CmsSeoMetadata | null {
-  return null;
+function buildSeoMetadata(article: ArticleDraftDto): CmsSeoMetadata | null {
+  return buildCmsSeoMetadata(article);
 }
 
 export interface ArticleMappingPreview {
@@ -129,6 +145,8 @@ export interface ArticleMappingPreview {
   status: 'draft';
   remoteAuthorId: string | null;
   remoteAuthorName: string | null;
+  /** The featured image filename that will be uploaded, or null when the article has none. */
+  featuredImageName: string | null;
   /** Character count of the rendered body, so the user can see something real was mapped. */
   contentLength: number;
 }
@@ -140,14 +158,20 @@ export interface ArticleMappingPreview {
  *
  *   title    the editor's working title, falling back to the model's title
  *   content  the generated body, rendered to the markup the CMS stores
+ *   excerpt  the article's own excerpt, when one has been written
  *   slug     Cynth's own slug, derived from the title
  *   status   always draft
- *   author   only when the user configured an author mapping
+ *   author   the article author's own CMS user, else the connection default
+ *   image    the article's featured image, when one has been chosen
  *
- * Excerpt is left null: Cynth has no excerpt field, and the one shown in
- * article lists is a display truncation, not editorial content. Sending it
- * would look like an authored summary and would overwrite any excerpt a human
- * had written in the CMS.
+ * On the excerpt: this used to be hardcoded null, with a comment explaining
+ * that Cynth had no excerpt field and that the one shown in article lists was
+ * a display truncation. That was true when it was written and stopped being
+ * true when the editorial pipeline added a real `articles.excerpt`. It is now
+ * sent when — and only when — it holds something: an authored standfirst is
+ * exactly what the destination's dek renders, and an absent one is still
+ * omitted rather than sent empty, so an excerpt written in the CMS is never
+ * overwritten by Cynth's silence.
  */
 export function buildDraftPayload(article: ArticleDraftDto, connection: CmsConnectionDto): CmsDraftPayload {
   if (!article.generated?.content?.trim()) {
@@ -161,12 +185,66 @@ export function buildDraftPayload(article: ArticleDraftDto, connection: CmsConne
 
   return {
     title,
-    content: articleBodyToHtml(article.generated.content),
-    excerpt: null,
+    // The products this article carries, so any placement marker the author
+    // wrote becomes a card built from Cynth's own records — including the
+    // affiliate link exactly as the user supplied it (Milestone 17).
+    content: articleBodyToHtml(article.generated.content, buildGenerationContext(article.id)?.products ?? []),
+    excerpt: article.excerpt?.trim() || null,
     slug: article.slug,
     status: 'draft',
-    remoteAuthorId: connection.defaultRemoteAuthorId,
+    remoteAuthorId: resolveRemoteAuthorId(article, connection),
+    featuredImage: buildFeaturedImage(article.id),
     seo: buildSeoMetadata(article),
+  };
+}
+
+/**
+ * Which CMS user this article should be attributed to.
+ *
+ * The article's own author wins, so a Sleep & Recovery piece arrives as its
+ * author rather than as whichever account Cynth authenticates with. The
+ * connection default is the fallback, which is what every article used before
+ * the personas had CMS accounts — so an author with no mapping behaves
+ * exactly as it always did rather than failing.
+ */
+function resolveRemoteAuthorId(article: ArticleDraftDto, connection: CmsConnectionDto): string | null {
+  if (article.authorId !== null) {
+    const author = getAuthorById(article.authorId);
+    const mapped = author?.remoteAuthorId?.trim();
+    if (mapped) return mapped;
+  }
+
+  return connection.defaultRemoteAuthorId;
+}
+
+/**
+ * The article's featured image as something a connector can upload.
+ *
+ * Returns null rather than throwing when the record points at a file that is
+ * no longer on disk: a missing image is a reason to push the article without
+ * one, not a reason to refuse to push the article at all.
+ *
+ * The path is rebuilt from the media directory and the stored filename rather
+ * than by joining the stored URL, matching how `removeMediaFile` already
+ * resolves the same records — a value from the database should not be able to
+ * name a path outside the media directory.
+ */
+function buildFeaturedImage(articleId: number): CmsDraftImage | null {
+  const asset = getFeaturedImage(articleId);
+  if (!asset?.url) return null;
+
+  const filename = path.basename(asset.url);
+  if (!filename || filename === '.' || filename === '..') return null;
+
+  const filePath = path.join(MEDIA_IMAGES_DIR, filename);
+  if (!fs.existsSync(filePath)) return null;
+
+  return {
+    filePath,
+    filename: asset.originalFilename ?? filename,
+    mimeType: asset.mimeType ?? 'application/octet-stream',
+    altText: asset.altText?.trim() || null,
+    title: asset.title?.trim() || null,
   };
 }
 
@@ -188,9 +266,30 @@ export function previewMapping(articleId: number, connectionId: number | null): 
     slug: payload.slug,
     status: payload.status,
     remoteAuthorId: payload.remoteAuthorId,
-    remoteAuthorName: connection.defaultRemoteAuthorName,
+    // The article's own author overrides the connection default, so naming
+    // the connection's author here would show a name that is not what gets
+    // sent. Resolve the name from the id that is actually in the payload.
+    remoteAuthorName: resolveRemoteAuthorName(article, connection, payload.remoteAuthorId),
+    featuredImageName: payload.featuredImage?.filename ?? null,
     contentLength: payload.content.length,
   };
+}
+
+/** The display name for whichever author id the payload actually carries. */
+function resolveRemoteAuthorName(
+  article: ArticleDraftDto,
+  connection: CmsConnectionDto,
+  remoteAuthorId: string | null,
+): string | null {
+  if (remoteAuthorId === null) return null;
+  if (remoteAuthorId === connection.defaultRemoteAuthorId) return connection.defaultRemoteAuthorName;
+
+  if (article.authorId !== null) {
+    const author = getAuthorById(article.authorId);
+    if (author?.remoteAuthorId?.trim() === remoteAuthorId) return author.name;
+  }
+
+  return null;
 }
 
 /* ------------------------------------------------------------- connection --- */
@@ -314,6 +413,36 @@ export async function listRemoteAuthors(connectionId: number) {
   return target.connector.listAuthors(target.context);
 }
 
+/* ------------------------------------------------------------- SEO gate --- */
+
+/**
+ * THE SEO GATE, at the point it matters.
+ *
+ *   Cynth Draft -> SEO Analysis -> SEO Findings -> User Review -> SEO Ready
+ *   -> WordPress Draft
+ *
+ * Evaluated here rather than inside the SEO feature so that the one path an
+ * article takes out of Cynth is the one path the gate sits on. A caller
+ * cannot route around it by calling a different push function, because there
+ * is only one.
+ *
+ * The gate is configurable, including switching it off: `enforceBeforePush`
+ * false means the decision is still computed and still shown, but never
+ * blocks. Cynth reports what it thinks either way — it simply does not
+ * override the user's configuration.
+ */
+export function evaluateGateForArticle(article: ArticleDraftDto): SeoGateDecision {
+  const seo = getArticleSeo(article.id);
+  const latestRun = getLatestAnalysisRun(article.id);
+  return evaluateSeoGate({
+    articleId: article.id,
+    seo,
+    latestRun,
+    findings: latestRun ? listFindingsForAnalysis(latestRun.id) : [],
+    currentContentFingerprint: contentFingerprint(article),
+  });
+}
+
 /* --------------------------------------------------------------- preflight --- */
 
 export interface PushPreflight {
@@ -334,6 +463,13 @@ export interface PushPreflight {
   configurationErrorCode: string | null;
   /** Every CMS this article currently lives on. */
   links: ArticleCmsLinkDto[];
+  /**
+   * The SEO gate decision (Milestone 14), always computed and always shown.
+   * It contributes to `ready` only when the user has the gate enforced.
+   */
+  seoGate: SeoGateDecision;
+  /** The SEO metadata that would travel with this push. Null when Cynth holds none. */
+  seo: CmsSeoMetadata | null;
 }
 
 /**
@@ -369,6 +505,14 @@ export function getPushPreflight(articleId: number, connectionId: number | null 
 
   const link = connection ? getLink(articleId, connection.id) : null;
 
+  // THE SEO GATE. Always evaluated, always reported. It only contributes to
+  // `ready` when the user has enforcement switched on — an article that has
+  // not been reviewed is still described honestly either way.
+  const seoGate = evaluateGateForArticle(article);
+  if (seoGate.enforced && !seoGate.ready) {
+    issues.push(...seoGate.blockingReasons.map((reason) => `SEO gate: ${reason}`));
+  }
+
   let mapping: ArticleMappingPreview | null = null;
   if (connection && article.generated?.content?.trim()) {
     const payload = buildDraftPayload(article, connection);
@@ -379,7 +523,8 @@ export function getPushPreflight(articleId: number, connectionId: number | null 
       slug: payload.slug,
       status: payload.status,
       remoteAuthorId: payload.remoteAuthorId,
-      remoteAuthorName: connection.defaultRemoteAuthorName,
+      remoteAuthorName: resolveRemoteAuthorName(article, connection, payload.remoteAuthorId),
+      featuredImageName: payload.featuredImage?.filename ?? null,
       contentLength: payload.content.length,
     };
   }
@@ -404,6 +549,8 @@ export function getPushPreflight(articleId: number, connectionId: number | null 
     issues,
     configurationErrorCode,
     links: listLinksForArticle(articleId),
+    seoGate,
+    seo: article.generated?.content?.trim() ? buildSeoMetadata(article) : null,
   };
 }
 
@@ -471,6 +618,30 @@ export async function pushArticle(
     });
     throw error;
   };
+
+  /* ---- THE SEO GATE ---------------------------------------------------- */
+
+  /**
+   * Enforced here, on the one path out of Cynth, and before any network call.
+   * A refusal is recorded like any other, so the history shows that the gate
+   * stopped a push rather than the push silently never happening.
+   *
+   * The gate is the user's configuration, not Cynth's opinion: with
+   * `enforceBeforePush` off, the decision is still computed and reported by
+   * the preflight, and nothing here blocks.
+   */
+  const criteria = getGateCriteria();
+  if (criteria.enforceBeforePush) {
+    const gate = evaluateGateForArticle(article);
+    if (!gate.ready) {
+      refuse(
+        new CmsError(
+          'seo_gate_blocked',
+          `This article has not passed the SEO gate: ${gate.blockingReasons.join(' ')} Review it under SEO, or change the gate criteria in Settings.`,
+        ),
+      );
+    }
+  }
 
   /* ---- DUPLICATE PROTECTION ------------------------------------------- */
 

@@ -36,7 +36,10 @@ export type CmsErrorCode =
   | 'not_pushed_yet'
   | 'remote_post_missing'
   | 'remote_post_published'
-  | 'push_in_progress';
+  | 'push_in_progress'
+  // The SEO gate. Not a CMS failure and not a content failure: Cynth
+  // declining to hand over an article that has not passed SEO review.
+  | 'seo_gate_blocked';
 
 const HTTP_STATUS_BY_CODE: Record<CmsErrorCode, number> = {
   connection_not_configured: 409,
@@ -50,6 +53,7 @@ const HTTP_STATUS_BY_CODE: Record<CmsErrorCode, number> = {
   remote_post_missing: 409,
   remote_post_published: 409,
   push_in_progress: 409,
+  seo_gate_blocked: 409,
   authentication_failed: 502,
   authorization_failed: 502,
   not_found: 502,

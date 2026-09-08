@@ -13,6 +13,16 @@ export interface GenerationRequest {
   /** The model id as the provider expects it, from the configured model record. */
   model: string;
   timeoutMs: number;
+  /**
+   * A hard cap on what the model may write back (Milestone 15).
+   *
+   * Article generation leaves this unset, so nothing truncates an article.
+   * It exists for the model TEST path, where the answer's content is
+   * irrelevant and the only question is whether the endpoint, the key and the
+   * model id work — so the request is capped at a handful of tokens rather
+   * than paying for a full response nobody reads.
+   */
+  maxOutputTokens?: number;
 }
 
 /** Per-call credentials and endpoint. Never logged, never persisted, never returned to the client. */
@@ -90,6 +100,17 @@ export interface ProviderModelInfo {
    * value means the model is not free however cheap its per-token prices are.
    */
   requestPrice: number | null;
+  /**
+   * The price of image OUTPUT, where the catalogue publishes one.
+   *
+   * Separate from the per-token prices because for an image model they are
+   * not the same number and can disagree completely: OpenRouter lists
+   * Seedream 4.5 at prompt 0 and completion 0 with image output at
+   * $9.58/M tokens. Reading only the first two says "free" about a model that
+   * charges for every image it draws, which is exactly the mistake the cost
+   * layer exists to prevent.
+   */
+  imageOutputPrice: number | null;
   contextLength: number | null;
   /** Availability/status exactly as the provider reports it. Null = not reported. */
   status: string | null;
@@ -110,4 +131,56 @@ export interface ProviderAdapter {
    * call, so only the sync endpoint invokes it, never generation.
    */
   listModels?(context: ProviderCallContext): Promise<ProviderModelInfo[]>;
+  /**
+   * Draws images, where the provider offers it.
+   *
+   * Optional, and absent on most adapters. A provider without this cannot be
+   * asked for a featured image, and the caller is told that rather than being
+   * silently routed somewhere else.
+   */
+  generateImages?(
+    request: ImageGenerationRequest,
+    context: ProviderCallContext,
+  ): Promise<NormalizedImageGeneration>;
+}
+
+/* ------------------------------------------------------- image output --- */
+
+/**
+ * What Cynth asks an image model for (Milestone 25).
+ *
+ * Deliberately small. Cynth does not expose seeds, samplers, negative
+ * prompts or style presets: the prompt is assembled from the article by one
+ * builder, exactly as text generation works, and the only knobs are the ones
+ * that change what a featured image IS rather than how it was made.
+ */
+export interface ImageGenerationRequest {
+  prompt: string;
+  model: string;
+  /** How many candidates to produce. Every one of them is charged for. */
+  count: number;
+  /** e.g. '16:9'. Featured images are wide; a square hero is a different thing. */
+  aspectRatio?: string;
+  timeoutMs: number;
+}
+
+/** One generated image, held in memory until something decides to keep it. */
+export interface GeneratedImage {
+  /** Raw bytes. Never a data URI and never a remote URL: the file is ours or it does not exist. */
+  data: Buffer;
+  mimeType: string;
+}
+
+export interface NormalizedImageGeneration {
+  images: GeneratedImage[];
+  /**
+   * What the provider says this actually cost, in USD.
+   *
+   * Reported rather than estimated. Image models are priced per image, so
+   * there is no honest way to compute this from a token count beforehand —
+   * null means the provider did not say, which is recorded as unknown and
+   * never as zero.
+   */
+  reportedCost: number | null;
+  reportedModel: string | null;
 }

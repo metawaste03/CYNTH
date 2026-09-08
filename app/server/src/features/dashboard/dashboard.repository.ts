@@ -4,6 +4,8 @@ import { countArticlesByStatus } from '../articles/articles.repository.js';
 export interface DashboardSummary {
   authors: { total: number; active: number };
   products: { total: number; active: number };
+  /** Media library assets, and how many are filed under a thematic area — an unfiled image is hard to match. */
+  media: { total: number; filed: number };
   /**
    * Article counts by lifecycle state, derived from the `articles` table.
    *
@@ -45,6 +47,10 @@ export function getDashboardSummary(): DashboardSummary {
     products: {
       total: count('SELECT COUNT(*) AS count FROM products'),
       active: count('SELECT COUNT(*) AS count FROM products WHERE is_active = 1'),
+    },
+    media: {
+      total: count('SELECT COUNT(*) AS count FROM media_assets'),
+      filed: count('SELECT COUNT(*) AS count FROM media_assets WHERE theme_id IS NOT NULL'),
     },
     articles: {
       total: count('SELECT COUNT(*) AS count FROM articles'),

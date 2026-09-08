@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
 import { ApiError } from '../../shared/services/apiClient';
 import type { ArticleDraft } from '../../shared/types/article';
-import { fetchArticle, setArticleStatus } from './api';
+import { fetchArticle, fetchArticleProducts, setArticleStatus } from './api';
+import type { ArticleProductCard } from './api';
+import { ArticleContent } from './ArticleContent';
 import { formatArticleDate } from './ArticleList';
 import { WordPressPushPanel } from './WordPressPushPanel';
+import { DeleteArticleButton } from './DeleteArticleButton';
+import { FeaturedImagePanel } from '../images/FeaturedImagePanel';
+import { SeoPanel } from '../seo/SeoPanel';
+import { QualityGatePanel } from '../quality-gate/QualityGatePanel';
 import './ArticleView.css';
 
 /**
@@ -33,9 +39,16 @@ function MetaRow({ label, value }: { label: string; value: string | null }) {
 
 export function ArticleView() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const articleId = Number(id);
 
   const [article, setArticle] = useState<ArticleDraft | null>(null);
+  /**
+   * The products behind this article's markers. Empty is the normal case —
+   * most articles carry none — so a failure here degrades to the marker being
+   * shown as an orphan rather than blocking the article from loading.
+   */
+  const [products, setProducts] = useState<ArticleProductCard[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -56,6 +69,10 @@ export function ArticleView() {
       })
       .catch((err) => setError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to load this article.'))
       .finally(() => setIsLoading(false));
+
+    fetchArticleProducts(articleId)
+      .then(setProducts)
+      .catch(() => setProducts([]));
   }, [articleId]);
 
   useEffect(load, [load]);
@@ -131,6 +148,14 @@ export function ArticleView() {
         >
           {isUpdating ? 'Saving…' : isDraft ? 'Mark as Published' : 'Move back to Draft'}
         </button>
+
+        {/* Deleting from here returns to Drafts, since the page being viewed
+            no longer exists afterwards. */}
+        <DeleteArticleButton
+          articleId={article.id}
+          title={displayTitle}
+          onDeleted={() => navigate('/drafts')}
+        />
       </div>
 
       {statusError && (
@@ -146,7 +171,11 @@ export function ArticleView() {
               The model titled this: <strong>{article.generated.title}</strong>
             </p>
           )}
-          <div className="article-view__content">{article.generated.content}</div>
+          {/* Product markers render as the cards they become, image included.
+              Before this they showed as literal [[product:14]] text, so an
+              uploaded primary image appeared nowhere in Cynth — it reached
+              only the published post. */}
+          <ArticleContent content={article.generated.content} products={products} />
           <p className="article-view__note">
             This is an AI-generated draft. It stays unpublished until you review and approve it.
           </p>
@@ -157,6 +186,22 @@ export function ArticleView() {
           Editorial Review step.
         </p>
       )}
+
+      {/* The featured image sits above the gates because it is part of the
+          article rather than a check on it — and because the SEO pass and the
+          CMS push both read it. */}
+      <FeaturedImagePanel articleId={articleId} onChanged={load} />
+
+      {/* Quality Gate -> SEO Status -> WordPress Draft, in that order down
+          the page. Quality comes first because it asks the earlier question:
+          is this a finished article at all? Neither gate blocks reading or
+          editing — only the CMS push path can refuse. */}
+      <QualityGatePanel articleId={articleId} />
+
+      {/* The SEO Engine sits between the Cynth draft and the CMS. It reads
+          the article and writes only SEO metadata beside it — never the
+          article's own content, title or brief. */}
+      <SeoPanel articleId={articleId} onChanged={load} />
 
       {/* Article -> WordPress Draft. Publication stays a human act performed
           in WordPress; nothing here can publish. */}

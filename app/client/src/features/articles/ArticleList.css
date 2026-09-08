@@ -138,3 +138,81 @@
   color: var(--color-accent);
   font-weight: 500;
 }
+
+/* --- deletion (Milestone 23) -------------------------------------------- */
+
+/* Deletion is irreversible and Cynth has no undo, so the confirmation shows
+   the consequences rather than asking a bare "are you sure?". */
+.delete-confirm {
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-danger, var(--color-border));
+  border-radius: var(--radius-md);
+}
+
+.delete-confirm__title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.95rem;
+}
+
+.delete-confirm__warning {
+  margin: 0 0 var(--space-2);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.delete-confirm__columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.delete-confirm__columns h4 {
+  margin: 0 0 var(--space-2);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-subtle, var(--color-text-muted));
+}
+
+.delete-confirm__columns ul {
+  margin: 0;
+  padding-left: 1.1em;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.delete-confirm__columns li {
+  margin-bottom: 4px;
+}
+
+.delete-confirm__final {
+  margin: 0 0 var(--space-3);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.delete-confirm__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+@media (max-width: 640px) {
+  .delete-confirm__columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* An unfinished run, shown where "Not generated yet" used to sit. That was
+   true but read as a dead draft; these say what the run is waiting on. */
+.article-list__run-waiting {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.article-list__run-stopped {
+  color: var(--color-warning);
+  font-weight: 500;
+}

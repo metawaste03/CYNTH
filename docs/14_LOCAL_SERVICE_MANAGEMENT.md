@@ -11,7 +11,7 @@
 | One process, not two | `shared/static/clientStatic.ts` serves `app/client/dist` from the same Express process as the API |
 | Production build | `npm run build` at the project root builds the client then the server; `npm start` runs the single process |
 | Automatic start after boot | `scripts/install-startup-task.ps1` registers a Windows scheduled task (logon trigger by default, `-AtStartup` for a pre-login trigger) |
-| Restart after crash | The same task, with `RestartCount 3` / `RestartInterval 1 minute` |
+| Restart after crash | The same task, with a second trigger that retries every minute and `MultipleInstances = IgnoreNew` |
 | Survive power loss | Follows from the boot/logon trigger; SQLite is already crash-safe per transaction |
 | Remove the task | `scripts/uninstall-startup-task.ps1` |
 | Is it actually up? | `scripts/status.ps1` checks the task state *and* `/api/health`, because those can disagree |
@@ -104,7 +104,7 @@ Revisit this if the two-process setup outlives its expected life.
 | Concern | How it is addressed |
 |---|---|
 | Automatic start after Windows boot | **Done** — `scripts/install-startup-task.ps1` (logon trigger by default; `-AtStartup` for pre-login, which needs one elevated run to register) |
-| Restart after crash | **Done** — the task's `RestartCount` / `RestartInterval` settings |
+| Restart after crash | **Done** — a second, repeating trigger on the same task. See the correction below. |
 | Survive power loss | **Done** — follows from the trigger; SQLite is already crash-safe per transaction |
 | Port conflicts | Done: `CYNTH_SERVER_PORT`, default 4100, read by both client and server |
 | Graceful shutdown | Done: `index.ts` handles SIGINT/SIGTERM and closes the database |
@@ -117,3 +117,87 @@ Revisit this if the two-process setup outlives its expected life.
 Start / Stop / Restart controls inside the web UI remain unbuilt, and should stay that way until a desktop wrapper (Option C) exists to back them. A browser page cannot execute `npm start`, and a button that cannot actually start anything is worse than no button. The health indicator reports the state and names the command; it does not pretend to control the process.
 
 Option C (Tauri) is still the better long-term fit and is still deferred — it is a milestone of its own, with a new build pipeline, code signing and an updater.
+
+
+## Correction (2026-08-30): how crash recovery actually works
+
+Milestone 13 recorded crash recovery as delivered by the task's `RestartCount`
+and `RestartInterval` settings. **That was wrong, and it was wrong in the worst
+way — the settings register successfully and read as though they work.**
+
+Task Scheduler applies `RestartCount` when the task *engine* reports a failure,
+not when a long-running process the task launched is terminated. Tested on
+2026-08-30 by killing the Node process: the task returned `LastTaskResult
+0xFFFFFFFF`, went to `Ready`, and Cynth stayed down indefinitely. Anyone
+relying on the Milestone 13 record would have believed they had recovery they
+did not have, and would only have discovered it during a real crash.
+
+What actually provides recovery is a **second trigger**: a one-off trigger
+starting at registration time, repeating every minute with an indefinite
+duration, combined with `MultipleInstances = IgnoreNew`. Every minute Windows
+attempts to start the task; the attempt is discarded while an instance is
+already running, and the first attempt after the process dies brings it back.
+
+Two things that look correct but are not, both found by testing:
+
+- **The repetition cannot hang off the logon trigger.** A trigger's repetition
+  window opens only when that trigger fires, so a repetition attached to the
+  logon trigger stays dormant until the *next* logon — doing nothing on the day
+  it is installed, and nothing after a mid-session crash. It has to be its own
+  trigger.
+- **`RepetitionDuration` cannot be `[TimeSpan]::MaxValue`.** It serialises to
+  `P99999999DT23H59M59S`, which Task Scheduler rejects. An empty duration is
+  how the XML expresses "indefinitely". This mattered more than it sounds:
+  `Register-ScheduledTask` reported the rejection as a *non-terminating* error,
+  so the script printed "Registered" in green **after** it had already
+  unregistered the previous task — leaving nothing scheduled while claiming
+  success. The script now verifies the task exists before reporting success.
+
+Verified end to end: with Cynth stopped, the watchdog started it unaided in
+51 seconds; a subsequent kill was recovered in 40 seconds; both recovered
+instances served the UI in production mode.
+
+`RestartCount` / `RestartInterval` are retained, because they do cover the
+separate case of the task failing to start at all — but they are no longer
+described as the recovery mechanism.
+
+## Correction (2026-09-02): the flashing-terminal failure mode
+
+**Symptom.** A terminal window pops open and closes again, roughly once a
+minute, indefinitely.
+
+**Cause.** The per-minute recovery trigger described above fires, the task
+tries to start Cynth, the port is already held by *something that is not the
+task*, node exits with `EADDRINUSE`, and the cycle repeats sixty seconds later.
+Each attempt flashed a console window because the task was registered without
+`-Hidden`.
+
+The usual "something that is not the task" is a **manually started server** —
+`node app/server/dist/index.js` run by hand, or from an editor, while the
+scheduled task is also installed. `MultipleInstances: IgnoreNew` does not help:
+it prevents a second *task* instance, and knows nothing about a process started
+outside Task Scheduler.
+
+**Fixes applied.**
+
+1. `install-startup-task.ps1` now registers the task with `-Hidden`, so a
+   recovery attempt is never visible. The window was pure noise — this task has
+   nothing to show anyone.
+2. The existing task was updated in place, so it did not need reinstalling.
+
+**The operational rule this implies.** When the scheduled task is installed, it
+owns the port. To pick up a new build, restart *the task* — do not start a
+second server by hand:
+
+```powershell
+Stop-ScheduledTask  -TaskName 'CYNTH Server'
+Start-ScheduledTask -TaskName 'CYNTH Server'
+```
+
+Starting one manually is what produces the flashing, and the flashing is the
+only outward sign that two things are competing for the port.
+
+**How to tell it is healthy.** `Get-ScheduledTaskInfo -TaskName 'CYNTH Server'`
+reporting `LastTaskResult` `2147946720` (`0x800710E0`) is **correct**, not an
+error: it is Task Scheduler refusing a duplicate start because Cynth is already
+running. `1` is the failure that produces the loop.

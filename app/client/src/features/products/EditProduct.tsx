@@ -54,6 +54,14 @@ export function EditProduct() {
           editorialFit: product.editorialFit ?? '',
           notes: product.notes ?? '',
           isActive: product.isActive,
+          themeId: product.themeId === null ? '' : String(product.themeId),
+          // Seeded from whatever is stored, whether a person wrote it or
+          // product research did — so editing does not silently discard
+          // research findings, and research findings can be corrected.
+          useCase: product.useCase ?? '',
+          problemSolved: product.problemSolved ?? '',
+          bestFor: product.bestFor ?? '',
+          keyFeatures: product.keyFeatures.join('\n'),
         }}
         onSubmit={async (input) => {
           const updated = await updateProduct(productId, input);

@@ -43,6 +43,16 @@ export interface ArticleDraftDto {
   importantTopics: string | null;
   notes: string | null;
   status: string;
+  /* --- The editorial pipeline (Milestone 20-22). Null until an article has been classified. --- */
+  /** The classified type, and the template it was written to. Carried to WordPress so EFD can pick a layout. */
+  articleTypeSlug: string | null;
+  articleTypeOverride: boolean;
+  templateId: string | null;
+  templateVersion: number | null;
+  /** The article as the template s sections, as JSON. What final validation checks. */
+  structuredContent: string | null;
+  excerpt: string | null;
+  reviewScore: number | null;
   createdAt: string;
   updatedAt: string;
   keywords: ArticleKeywordsDto | null;
@@ -106,6 +116,13 @@ function mapArticle(row: ArticleRow, keywords: ArticleKeywordsDto | null): Artic
     projectId: row.project_id,
     themeId: row.theme_id,
     topicId: row.topic_id,
+    articleTypeSlug: (row as any).article_type_slug ?? null,
+    articleTypeOverride: (row as any).article_type_override === 1,
+    templateId: (row as any).template_id ?? null,
+    templateVersion: (row as any).template_version ?? null,
+    structuredContent: (row as any).structured_content ?? null,
+    excerpt: (row as any).excerpt ?? null,
+    reviewScore: (row as any).review_score ?? null,
     targetAudience: row.target_audience,
     searchIntent: row.search_intent,
     readerPainPoints: row.reader_pain_points,
@@ -569,6 +586,124 @@ export function setArticleStatus(id: number, status: ArticleStatus): ArticleDraf
  * startup alongside the schema migrations. Articles with no title at all are
  * left alone.
  */
+/* ------------------------------------------------------------ deletion --- */
+
+export interface DeletionPreflight {
+  articleId: number;
+  title: string | null;
+  status: string;
+  /** Reasons deletion is refused without an explicit override. */
+  blockers: string[];
+  /** Things the user should know but which do not refuse. */
+  warnings: string[];
+  /** What deleting actually removes, so nothing is a surprise. */
+  removes: string[];
+  /** What survives, for the same reason. */
+  keeps: string[];
+  canDelete: boolean;
+}
+
+/**
+ * What deleting this article would do, answered before anything is destroyed.
+ *
+ * The one real blocker is a CMS link. Cynth's connector has no ability to
+ * delete a remote post — by design, since Milestone 13 — so deleting an
+ * article that lives on WordPress does NOT remove the post. It only removes
+ * Cynth's record that the post exists, and the next push of anything similar
+ * would create a duplicate rather than updating it. That is worth refusing
+ * over, and worth explaining rather than silently allowing.
+ */
+export function getDeletionPreflight(id: number): DeletionPreflight | null {
+  const db = getDatabase();
+  const article = getArticleById(id);
+  if (!article) return null;
+
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+
+  const links = db
+    .prepare('SELECT external_id, external_status FROM article_cms_links WHERE article_id = ?')
+    .all(id) as { external_id: string | null; external_status: string | null }[];
+
+  if (links.length) {
+    const described = links
+      .map((link) => `post ${link.external_id ?? 'unknown'}${link.external_status ? ` (${link.external_status})` : ''}`)
+      .join(', ');
+    blockers.push(
+      `This article has been pushed to a CMS as ${described}. Cynth cannot delete a remote post, so deleting here removes only the link — the post stays published and a later push would create a duplicate. Delete the post in WordPress first, or confirm you want to break the link.`,
+    );
+  }
+
+  if (article.status === 'published') {
+    warnings.push('This article is marked as published in Cynth.');
+  }
+
+  const count = (sql: string): number =>
+    (db.prepare(sql).get(id) as { count: number }).count;
+
+  const removes: string[] = ['The article and its generated content'];
+  const keywords = count('SELECT COUNT(*) AS count FROM keywords WHERE article_id = ?');
+  if (keywords) removes.push('Its keyword record');
+
+  const products = count('SELECT COUNT(*) AS count FROM article_products WHERE article_id = ?');
+  if (products) removes.push(`Its ${products} product attachment(s) — the products themselves are kept`);
+
+  const media = count('SELECT COUNT(*) AS count FROM article_media WHERE article_id = ?');
+  if (media) removes.push(`Its ${media} image attachment(s) — the images themselves are kept`);
+
+  const seo = count('SELECT COUNT(*) AS count FROM article_seo WHERE article_id = ?');
+  if (seo) removes.push('Its SEO configuration and analysis');
+
+  const pipelines = count('SELECT COUNT(*) AS count FROM article_pipelines WHERE article_id = ?');
+  if (pipelines) removes.push(`Its ${pipelines} pipeline run(s), including every stage result`);
+
+  const keeps = [
+    'The generation history, including what each attempt cost — it is detached, not deleted',
+    'Any products, images and authors it referenced',
+  ];
+  if (links.length) keeps.push('The remote CMS post, which Cynth cannot delete');
+
+  return {
+    articleId: id,
+    title: article.title ?? article.generated?.title ?? null,
+    status: article.status,
+    blockers,
+    warnings,
+    removes,
+    keeps,
+    canDelete: blockers.length === 0,
+  };
+}
+
+/**
+ * Deletes an article.
+ *
+ * Refuses when the preflight found a blocker, unless the caller explicitly
+ * overrides — the override exists because "I already deleted the WordPress
+ * post" is a real situation Cynth cannot verify, and the user is the one who
+ * knows. It is never the default.
+ *
+ * The cascades are declared in the schema: everything belonging to the article
+ * goes with it, while generation_history and cms_push_history keep their rows
+ * with a null article_id, so the record of what was spent survives the thing
+ * it was spent on.
+ */
+export function deleteArticle(id: number, options: { force?: boolean } = {}): { deleted: true } | { error: string } {
+  const preflight = getDeletionPreflight(id);
+  if (!preflight) return { error: 'Draft not found.' };
+
+  if (!preflight.canDelete && !options.force) {
+    return { error: preflight.blockers.join(' ') };
+  }
+
+  const db = getDatabase();
+  // Foreign keys are ON for the connection (see shared/database/index.ts), so
+  // the declared cascades do the work rather than a hand-written sequence of
+  // deletes that could drift from the schema.
+  db.prepare('DELETE FROM articles WHERE id = ?').run(id);
+  return { deleted: true };
+}
+
 export function backfillMissingSlugs(): number {
   const db = getDatabase();
   const rows = db

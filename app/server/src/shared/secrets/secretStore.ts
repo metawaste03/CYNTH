@@ -22,8 +22,17 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// app/server/src/shared/secrets -> app/server/.env.local
-export const SECRETS_FILE_PATH = path.resolve(__dirname, '..', '..', '..', '.env.local');
+/**
+ * app/server/src/shared/secrets -> app/server/.env.local
+ *
+ * Overridable via CYNTH_SECRETS_FILE, which exists for exactly one reason:
+ * tests must not write to the real secrets file. `CYNTH_DB_DIR` already gives
+ * the database that isolation, and its absence here was a real defect — a test
+ * that configured a credential wrote it into the developer's own .env.local.
+ */
+export const SECRETS_FILE_PATH = process.env.CYNTH_SECRETS_FILE
+  ? path.resolve(process.env.CYNTH_SECRETS_FILE)
+  : path.resolve(__dirname, '..', '..', '..', '.env.local');
 
 function readSecretsFile(): Map<string, string> {
   const entries = new Map<string, string>();

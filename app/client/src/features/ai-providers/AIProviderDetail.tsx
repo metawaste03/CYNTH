@@ -14,22 +14,56 @@ import {
   setModelStatus,
   setModelDefault,
   deleteModel,
+  testModel,
 } from './api';
 import { purposeLabel, PURPOSE_LABELS } from './purposeLabels';
 import { ModelDiscovery } from './ModelDiscovery';
+import { CapabilityPicker } from './CapabilityPicker';
+import { ModelValidationReport } from './ModelValidationReport';
 import { costClassLabel, formatPerMillion } from './pricing';
-import type { ModelPurpose, ProviderDetail as ProviderDetailType, ProviderModel } from '../../shared/types/aiProvider';
+import type {
+  CapabilityMeta,
+  ModelPurpose,
+  ModelValidationResult,
+  ProviderDetail as ProviderDetailType,
+  ProviderModel,
+} from '../../shared/types/aiProvider';
 import { ApiError } from '../../shared/services/apiClient';
 import './AIProviderDetail.css';
 
 interface ModelDraft {
   modelName: string;
   displayName: string;
-  purpose: ModelPurpose | '';
+  /** A capability SET (Milestone 15) — a model may hold several. */
+  purposes: ModelPurpose[];
   isEnabled: boolean;
 }
 
-const EMPTY_MODEL_DRAFT: ModelDraft = { modelName: '', displayName: '', purpose: '', isEnabled: true };
+const EMPTY_MODEL_DRAFT: ModelDraft = { modelName: '', displayName: '', purposes: [], isEnabled: true };
+
+/**
+ * Fallback capability list, used only until /ai-providers/meta answers.
+ * The server owns the labels, so a capability added there needs no change here.
+ */
+const FALLBACK_CAPABILITIES: CapabilityMeta[] = (Object.keys(PURPOSE_LABELS) as ModelPurpose[]).map((value) => ({
+  value,
+  label: PURPOSE_LABELS[value],
+  description: '',
+  implemented: true,
+}));
+
+/** The validation state, as a short badge. */
+function ValidationBadge({ model }: { model: ProviderModel }) {
+  const status = model.validation?.status ?? 'unvalidated';
+  const label =
+    status === 'valid' ? 'Validated' : status === 'invalid' ? 'Validation failed' : 'Not validated';
+
+  return (
+    <span className={`model-validation-badge model-validation-badge--${status}`} title={model.validation?.message ?? ''}>
+      {label}
+    </span>
+  );
+}
 
 function Field({ label, value }: { label: string; value: string | null }) {
   return (
@@ -47,7 +81,13 @@ export function AIProviderDetail() {
   const location = useLocation();
 
   const [provider, setProvider] = useState<ProviderDetailType | null>(null);
-  const [purposes, setPurposes] = useState<readonly ModelPurpose[]>(Object.keys(PURPOSE_LABELS) as ModelPurpose[]);
+  const [capabilityMeta, setCapabilityMeta] = useState<CapabilityMeta[]>(FALLBACK_CAPABILITIES);
+  /** Per-model Test Model state, keyed by registry id. */
+  const [testingModelId, setTestingModelId] = useState<number | null>(null);
+  const [modelTestResult, setModelTestResult] = useState<{ modelId: number; result: ModelValidationResult } | null>(
+    null,
+  );
+  const [pendingPaidTest, setPendingPaidTest] = useState<{ modelId: number; message: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>((location.state as { flash?: string } | null)?.flash ?? null);
@@ -71,7 +111,7 @@ export function AIProviderDetail() {
   useEffect(() => {
     load();
     fetchProviderMeta()
-      .then((meta) => setPurposes(meta.purposes))
+      .then((meta) => setCapabilityMeta(meta.capabilities?.length ? meta.capabilities : FALLBACK_CAPABILITIES))
       .catch(() => undefined);
   }, [providerId]);
 
@@ -146,7 +186,7 @@ export function AIProviderDetail() {
       const model = await addModel(providerId, {
         modelName: modelDraft.modelName,
         displayName: modelDraft.displayName || undefined,
-        purpose: modelDraft.purpose || undefined,
+        purposes: modelDraft.purposes,
         isEnabled: modelDraft.isEnabled,
       });
       setProvider((prev) => (prev ? { ...prev, models: [...prev.models, model], modelCount: prev.modelCount + 1 } : prev));
@@ -162,7 +202,7 @@ export function AIProviderDetail() {
     setEditDraft({
       modelName: model.modelName,
       displayName: model.displayName ?? '',
-      purpose: model.purpose ?? '',
+      purposes: (model.assignedCapabilities ?? []).map((capability) => capability.purpose),
       isEnabled: model.isEnabled,
     });
     setModelError(null);
@@ -177,7 +217,7 @@ export function AIProviderDetail() {
       const updated = await updateModel(providerId, modelId, {
         modelName: editDraft.modelName,
         displayName: editDraft.displayName || undefined,
-        purpose: editDraft.purpose || undefined,
+        purposes: editDraft.purposes,
         isEnabled: editDraft.isEnabled,
       });
       setProvider((prev) =>
@@ -194,13 +234,43 @@ export function AIProviderDetail() {
     setProvider((prev) => (prev ? { ...prev, models: prev.models.map((m) => (m.id === model.id ? updated : m)) } : prev));
   }
 
-  async function handleSetModelDefault(model: ProviderModel) {
+  async function handleSetModelDefault(model: ProviderModel, purpose: ModelPurpose) {
     setModelError(null);
     try {
-      await setModelDefault(providerId, model.id);
+      await setModelDefault(providerId, model.id, purpose);
       load(); // reload so any other provider's model that lost default-for-purpose is reflected too
     } catch (err) {
       setModelError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to set default model.');
+    }
+  }
+
+  /**
+   * TEST MODEL.
+   *
+   * Sends the smallest request that establishes the model works. It does not
+   * create an article. A paid model comes back as a 402 the first time, with
+   * the estimated cost, so the confirmation is an informed one rather than a
+   * blank "are you sure".
+   */
+  async function handleTestModel(model: ProviderModel, confirmed = false) {
+    setModelError(null);
+    setPendingPaidTest(null);
+    setModelTestResult(null);
+    setTestingModelId(model.id);
+
+    try {
+      const outcome = await testModel(providerId, model.id, confirmed);
+      if (outcome.validation) setModelTestResult({ modelId: model.id, result: outcome.validation });
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 402) {
+        // Not a failure: Cynth declined to spend without being asked to.
+        setPendingPaidTest({ modelId: model.id, message: err.errors.join(' ') });
+      } else {
+        setModelError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to test the model.');
+      }
+    } finally {
+      setTestingModelId(null);
     }
   }
 
@@ -325,17 +395,12 @@ export function AIProviderDetail() {
               Display Name
               <input value={modelDraft.displayName} onChange={(e) => setModelDraft((d) => ({ ...d, displayName: e.target.value }))} />
             </label>
-            <label>
-              Purpose
-              <select value={modelDraft.purpose} onChange={(e) => setModelDraft((d) => ({ ...d, purpose: e.target.value as ModelPurpose | '' }))}>
-                <option value="">No purpose set</option>
-                {purposes.map((purpose) => (
-                  <option key={purpose} value={purpose}>
-                    {purposeLabel(purpose)}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <CapabilityPicker
+              idPrefix="add-model"
+              capabilities={capabilityMeta}
+              selected={modelDraft.purposes}
+              onChange={(purposes) => setModelDraft((d) => ({ ...d, purposes }))}
+            />
             <label className="provider-model-form__checkbox">
               <input type="checkbox" checked={modelDraft.isEnabled} onChange={(e) => setModelDraft((d) => ({ ...d, isEnabled: e.target.checked }))} />
               Enabled
@@ -364,17 +429,12 @@ export function AIProviderDetail() {
                       Display Name
                       <input value={editDraft.displayName} onChange={(e) => setEditDraft((d) => ({ ...d, displayName: e.target.value }))} />
                     </label>
-                    <label>
-                      Purpose
-                      <select value={editDraft.purpose} onChange={(e) => setEditDraft((d) => ({ ...d, purpose: e.target.value as ModelPurpose | '' }))}>
-                        <option value="">No purpose set</option>
-                        {purposes.map((purpose) => (
-                          <option key={purpose} value={purpose}>
-                            {purposeLabel(purpose)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <CapabilityPicker
+                      idPrefix={`edit-model-${model.id}`}
+                      capabilities={capabilityMeta}
+                      selected={editDraft.purposes}
+                      onChange={(purposes) => setEditDraft((d) => ({ ...d, purposes }))}
+                    />
                     <label className="provider-model-form__checkbox">
                       <input type="checkbox" checked={editDraft.isEnabled} onChange={(e) => setEditDraft((d) => ({ ...d, isEnabled: e.target.checked }))} />
                       Enabled
@@ -400,9 +460,48 @@ export function AIProviderDetail() {
                           {model.isEnabled ? 'Enabled' : 'Disabled'}
                         </span>
                         {model.isDefaultForPurpose && <span className="status-badge is-active">Default</span>}
+                        <ValidationBadge model={model} />
                       </div>
                     </div>
-                    <p className="provider-model-card__purpose">{purposeLabel(model.purpose)}</p>
+
+                    {/* CAPABILITIES. A model may hold several, and each one
+                        carries its own default flag — "the default article
+                        model" and "the default SEO model" are independent
+                        choices that one model can hold both of. */}
+                    <ul className="provider-model-card__capabilities">
+                      {(model.assignedCapabilities ?? []).length === 0 ? (
+                        <li className="capability-chip capability-chip--none">
+                          No capability assigned — this model appears in no workflow&rsquo;s picker
+                        </li>
+                      ) : (
+                        model.assignedCapabilities.map((capability) => (
+                          <li
+                            key={capability.purpose}
+                            className={`capability-chip${capability.isDefaultForPurpose ? ' capability-chip--default' : ''}`}
+                          >
+                            {purposeLabel(capability.purpose)}
+                            {capability.isDefaultForPurpose && <span className="capability-chip__tag">Default</span>}
+                          </li>
+                        ))
+                      )}
+                    </ul>
+
+                    {model.validation?.lastTest && (
+                      <p
+                        className={`provider-model-card__test provider-model-card__test--${model.validation.lastTest.status}`}
+                      >
+                        <strong>
+                          Last test: {model.validation.lastTest.status === 'passed' ? 'Passed' : 'Failed'}
+                        </strong>{' '}
+                        ({model.validation.lastTest.mode === 'live' ? 'live request' : 'metadata only'},{' '}
+                        {model.validation.lastTest.testedAt}) — {model.validation.lastTest.message}
+                      </p>
+                    )}
+                    {model.validation?.status === 'invalid' && !model.validation.lastTest && (
+                      <p className="provider-model-card__warning" role="note">
+                        {model.validation.message}
+                      </p>
+                    )}
 
                     {/* PRICING IS NEVER HIDDEN. A model with no published
                         price says so plainly — it is treated as paid, and
@@ -450,12 +549,52 @@ export function AIProviderDetail() {
                         but generation with it may fail.
                       </p>
                     )}
+                    {/* A paid model is never tested without being asked
+                        for twice: the first press reports the cost, the
+                        second one spends it. */}
+                    {pendingPaidTest?.modelId === model.id && (
+                      <div className="provider-model-card__cost-warning" role="alert">
+                        <p>{pendingPaidTest.message}</p>
+                        <div className="provider-model-card__actions">
+                          <button
+                            type="button"
+                            className="button button--primary"
+                            onClick={() => handleTestModel(model, true)}
+                          >
+                            Run the test anyway
+                          </button>
+                          <button type="button" className="button" onClick={() => setPendingPaidTest(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {modelTestResult?.modelId === model.id && (
+                      <ModelValidationReport result={modelTestResult.result} />
+                    )}
+
                     <div className="provider-model-card__actions">
-                      {model.purpose && !model.isDefaultForPurpose && (
-                        <button type="button" className="button" onClick={() => handleSetModelDefault(model)}>
-                          Set as Default for Purpose
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        className="button"
+                        disabled={testingModelId === model.id}
+                        onClick={() => handleTestModel(model)}
+                      >
+                        {testingModelId === model.id ? 'Testing…' : 'Test Model'}
+                      </button>
+                      {(model.assignedCapabilities ?? [])
+                        .filter((capability) => !capability.isDefaultForPurpose)
+                        .map((capability) => (
+                          <button
+                            key={capability.purpose}
+                            type="button"
+                            className="button"
+                            onClick={() => handleSetModelDefault(model, capability.purpose)}
+                          >
+                            Make default for {purposeLabel(capability.purpose)}
+                          </button>
+                        ))}
                       <button type="button" className="button" onClick={() => handleToggleModelEnabled(model)}>
                         {model.isEnabled ? 'Disable' : 'Enable'}
                       </button>

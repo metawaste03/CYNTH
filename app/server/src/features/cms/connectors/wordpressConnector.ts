@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { CmsError, sanitizeCmsMessage } from '../cms.errors.js';
 import type {
   CmsCallContext,
@@ -26,6 +27,9 @@ import type {
 
 /** How long one WordPress request may take. A local site answers in milliseconds; a remote one should still not hang the UI. */
 const REQUEST_TIMEOUT_MS = 20_000;
+
+/** Longer than a JSON call: a hero image is megabytes, and the media library resizes it on receipt. */
+const MEDIA_UPLOAD_TIMEOUT_MS = 60_000;
 
 export const WORDPRESS_CONNECTOR_TYPE = 'wordpress';
 
@@ -225,11 +229,100 @@ function draftBody(payload: CmsDraftPayload): Record<string, unknown> {
   if (payload.excerpt) body.excerpt = payload.excerpt;
   if (payload.remoteAuthorId) body.author = Number(payload.remoteAuthorId) || payload.remoteAuthorId;
 
-  // payload.seo is deliberately not mapped. The SEO Engine milestone owns
-  // those values; sending fabricated ones now would put invented metadata on
-  // a real post. The field exists so the mapping has somewhere to land.
+  // payload.seo now carries real, human-owned SEO metadata (Milestone 14),
+  // and is still deliberately not written to any post field.
+  //
+  // The reason is that WordPress itself stores none of it: an SEO title and a
+  // meta description live in whichever SEO plugin the site runs, each under
+  // its own post-meta keys. EveryFiveDays' plugin has not been chosen, and
+  // writing keys for a plugin that may not be installed would create orphaned
+  // post meta that no one ever reads.
+  //
+  // The mapping seam already exists — see cms/seoAdapter.ts, whose registry
+  // is empty for exactly this reason. When the SEO stack is decided, one
+  // SeoFieldMapping is registered there and applied here, and nothing else in
+  // Cynth changes.
 
   return body;
+}
+
+/**
+ * Uploads the payload's featured image and attaches it to the post.
+ *
+ * Runs after the draft exists, in two steps, because that is what the REST
+ * API offers: `/wp/v2/media` creates the attachment, then the post's
+ * `featured_media` points at it. There is no single call that does both.
+ *
+ * DELIBERATELY NON-FATAL. The article and its body are already safely in
+ * WordPress by the time this runs. If the upload fails — the file moved, the
+ * account cannot upload files, the site rejects the MIME type — the right
+ * outcome is a draft with no featured image, not a push the user is told
+ * failed and retries, producing a second copy of an article that is already
+ * there. The image is re-sent on the next update.
+ */
+async function attachFeaturedImage(
+  post: CmsRemotePost,
+  payload: CmsDraftPayload,
+  context: CmsCallContext,
+): Promise<CmsRemotePost> {
+  const image = payload.featuredImage;
+  if (!image) return post;
+
+  try {
+    const bytes = await readFile(image.filePath);
+
+    const upload = await fetch(`${apiRoot(context.baseUrl)}/wp/v2/media`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        authorization: authHeader(context),
+        'content-type': image.mimeType,
+        // WordPress reads the filename from this header for a raw-body
+        // upload, which avoids assembling a multipart request by hand.
+        'content-disposition': `attachment; filename="${sanitizeUploadFilename(image.filename)}"`,
+      },
+      body: new Uint8Array(bytes),
+      signal: AbortSignal.timeout(MEDIA_UPLOAD_TIMEOUT_MS),
+    });
+
+    if (!upload.ok) return post;
+
+    const media = (await upload.json().catch(() => null)) as Record<string, unknown> | null;
+    const mediaId = media && typeof media.id === 'number' ? media.id : null;
+    if (mediaId === null) return post;
+
+    // Alt text is a separate write and only happens when the editor actually
+    // wrote some — an empty alt attribute is better than an invented one.
+    if (image.altText) {
+      await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/media/${mediaId}`, {
+        method: 'POST',
+        headers: { authorization: authHeader(context) },
+        body: { alt_text: image.altText },
+      });
+    }
+
+    const attach = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(post.id)}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      // `status` is restated even though WordPress would leave it untouched
+      // on a partial update. Every write this connector makes to a post says
+      // "draft" — that is the invariant the whole module is built around, and
+      // an exception to it would be the first place a future edit could
+      // accidentally publish something.
+      body: { featured_media: mediaId, status: DRAFT_STATUS },
+    });
+
+    return attach.ok ? mapPost(attach.json, context.baseUrl) : post;
+  } catch {
+    return post;
+  }
+}
+
+/** A filename WordPress will accept, with any path component removed. */
+function sanitizeUploadFilename(name: string): string {
+  const base = name.split(/[/\\]/).pop() ?? 'image';
+  const cleaned = base.replace(/["\r\n]/g, '').trim();
+  return cleaned || 'image';
 }
 
 export const wordpressConnector: CmsConnector = {
@@ -342,7 +435,9 @@ export const wordpressConnector: CmsConnector = {
     });
 
     if (!response.ok) throwForFailure(response, context, 'create posts');
-    return mapPost(response.json, context.baseUrl);
+    const post = mapPost(response.json, context.baseUrl);
+
+    return attachFeaturedImage(post, payload, context);
   },
 
   async updateDraft(externalId: string, payload: CmsDraftPayload, context: CmsCallContext): Promise<CmsRemotePost> {
@@ -353,7 +448,9 @@ export const wordpressConnector: CmsConnector = {
     });
 
     if (!response.ok) throwForFailure(response, context, 'edit this post');
-    return mapPost(response.json, context.baseUrl);
+    const post = mapPost(response.json, context.baseUrl);
+
+    return attachFeaturedImage(post, payload, context);
   },
 
   /** Reads a post's current state. Null — not an error — when WordPress no longer has it. */

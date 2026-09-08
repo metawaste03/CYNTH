@@ -16,6 +16,10 @@
  * that happens to contain angle brackets cannot inject HTML into a post.
  */
 
+import type { ArticleProductContext } from '../generation/generationContext.service.js';
+import { renderProductCard } from './productCard.js';
+import { PRODUCT_MARKER_PATTERN } from '../prompt-builder/promptBuilder.service.js';
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -67,10 +71,20 @@ interface ListState {
   items: string[];
 }
 
-/** Renders a generated article body to HTML. Returns an empty string for empty input — never a placeholder. */
-export function articleBodyToHtml(markdown: string): string {
+/**
+ * Renders a generated article body to HTML.
+ *
+ * `products` supplies the cards for any `[[product:id]]` markers the author
+ * placed (Milestone 17). Omit it and a marker renders as the literal text the
+ * author wrote, which is the same rule this file already applies to anything
+ * it does not recognise: nothing is silently dropped.
+ *
+ * Returns an empty string for empty input — never a placeholder.
+ */
+export function articleBodyToHtml(markdown: string, products: ArticleProductContext[] = []): string {
   const lines = markdown.replace(/\r\n/g, '\n').split('\n');
   const blocks: string[] = [];
+  const productsById = new Map(products.map((product) => [product.productId, product]));
 
   let paragraph: string[] = [];
   let list: ListState | null = null;
@@ -129,6 +143,20 @@ export function articleBodyToHtml(markdown: string): string {
     if (!line.trim()) {
       flushAll();
       continue;
+    }
+
+    // A product marker becomes a card, built from stored data. Checked before
+    // the block rules below so it is never mistaken for a paragraph. A marker
+    // naming a product this article does not carry falls through and renders
+    // as the text the author wrote, rather than vanishing.
+    const marker = PRODUCT_MARKER_PATTERN.exec(line);
+    if (marker) {
+      const product = productsById.get(Number(marker[1]));
+      if (product) {
+        flushAll();
+        blocks.push(renderProductCard(product));
+        continue;
+      }
     }
 
     const heading = line.match(/^(#{1,6})\s+(.*)$/);

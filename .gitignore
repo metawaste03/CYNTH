@@ -43,3 +43,10 @@ lerna-debug.log*
 *API Keys*.txt
 *api-key*.txt
 *api-keys*.txt
+
+# Runtime data, not source. Images people upload through the app and the
+# server's own logs live beside the database and are restored from backup,
+# not from git.
+database/uploads/
+database/*.log
+database/*.log.err

@@ -220,6 +220,23 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
             <p className="wp-push__not-pushed">This article has not been sent to WordPress yet.</p>
           )}
 
+          {/* THE SEO GATE, stated on the push panel itself. The gate is
+              evaluated whether or not it is enforced, so the reader always
+              knows where the article stands before pressing anything. */}
+          {preflight.seoGate && (
+            <p className="wp-push__hint">
+              <strong>
+                {preflight.seoGate.ready ? 'SEO gate: passed.' : 'SEO gate: not passed.'}
+              </strong>{' '}
+              {preflight.seoGate.ready
+                ? preflight.seoGate.warnings.length > 0
+                  ? `${preflight.seoGate.warnings.length} warning(s) to review — none of them blocking.`
+                  : 'Nothing is outstanding.'
+                : preflight.seoGate.blockingReasons.join(' ')}
+              {!preflight.seoGate.enforced && ' Enforcement is switched off, so this does not block the push.'}
+            </p>
+          )}
+
           {!preflight.ready && preflight.issues.length > 0 && (
             <div className="form-error" role="alert">
               <p>This article can’t be sent yet:</p>

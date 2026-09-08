@@ -34,6 +34,12 @@ export interface AuthorDto {
   perspective: string | null;
   editorialPrinciples: string | null;
   boundaries: string | null;
+  /**
+   * The CMS user this author's articles are attributed to. Null means "fall
+   * back to the connection's default", which is what every author did before
+   * the five personas had WordPress accounts of their own.
+   */
+  remoteAuthorId: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -60,6 +66,7 @@ function mapAuthor(row: AuthorRow): AuthorDto {
     perspective: row.perspective,
     editorialPrinciples: row.editorial_principles,
     boundaries: row.boundaries,
+    remoteAuthorId: row.remote_author_id ?? null,
     isActive: row.is_active === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

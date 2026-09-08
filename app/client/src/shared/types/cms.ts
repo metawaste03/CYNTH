@@ -1,3 +1,5 @@
+import type { SeoGateDecision } from './seo';
+
 /**
  * Mirrors the server's CMS feature (Milestone 13).
  *
@@ -124,6 +126,32 @@ export interface PushPreflight {
   issues: string[];
   configurationErrorCode: string | null;
   links: ArticleCmsLink[];
+  /**
+   * The SEO gate decision (Milestone 14). Always computed and always shown;
+   * it only contributes to `ready` when enforcement is switched on.
+   */
+  seoGate: SeoGateDecision;
+  /** The SEO metadata that would travel with this push. Null when Cynth holds none. */
+  seo: CmsSeoMetadata | null;
+}
+
+/** SEO metadata as it reaches a CMS. Plugin-independent — see cms/seoAdapter.ts on the server. */
+export interface CmsSeoMetadata {
+  seoTitle?: string | null;
+  metaDescription?: string | null;
+  canonicalUrl?: string | null;
+  targetQuery?: string | null;
+  structuredData?: Record<string, unknown> | null;
+  internalLinks?: CmsLinkRecommendation[];
+  externalLinks?: CmsLinkRecommendation[];
+}
+
+/** One link the SEO engine proposed. `approved` is always true here: nothing else travels. */
+export interface CmsLinkRecommendation {
+  url: string;
+  anchorText: string | null;
+  rationale: string | null;
+  approved: boolean;
 }
 
 export interface CmsRemotePost {

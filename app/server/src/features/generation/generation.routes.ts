@@ -5,6 +5,13 @@ import {
   isValidGenerationMode,
   setGenerationMode,
 } from './generationPolicy.service.js';
+import {
+  CEILING_MAX_WORDS,
+  DEFAULT_MAX_WORDS,
+  FLOOR_MAX_WORDS,
+  getHouseMaxWords,
+  setHouseMaxWords,
+} from '../templates/articleLength.service.js';
 
 /**
  * Generation policy: the mode that decides whether Cynth may spend money.
@@ -38,4 +45,29 @@ generationRouter.put('/mode', (req, res) => {
   }
 
   res.json({ mode: setGenerationMode(mode) });
+});
+
+/* --------------------------------------------------------- article length --- */
+
+/**
+ * The publication-wide word ceiling.
+ *
+ * Read by the writer's prompt, the reviewer's brief and final validation, so
+ * changing it here changes all three at once and they cannot disagree. A
+ * template may be shorter than this; none may be longer.
+ */
+generationRouter.get('/article-length', (_req, res) => {
+  res.json({
+    maxWords: getHouseMaxWords(),
+    default: DEFAULT_MAX_WORDS,
+    min: FLOOR_MAX_WORDS,
+    max: CEILING_MAX_WORDS,
+  });
+});
+
+generationRouter.put('/article-length', (req, res) => {
+  const result = setHouseMaxWords(Number((req.body ?? {}).maxWords));
+  if ('error' in result) return res.status(400).json({ errors: [result.error] });
+
+  res.json({ ...result, default: DEFAULT_MAX_WORDS, min: FLOOR_MAX_WORDS, max: CEILING_MAX_WORDS });
 });

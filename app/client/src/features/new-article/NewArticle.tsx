@@ -4,6 +4,7 @@ import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
 import { ArticleTypeCard } from './ArticleTypeCard';
 import { AuthorPicker } from './AuthorPicker';
 import { ProductPicker } from './ProductPicker';
+import { ArticleProductsPanel } from '../product-research/ArticleProductsPanel';
 import { ContentBriefFields } from './ContentBriefFields';
 import { EditorialReviewSummary } from './EditorialReviewSummary';
 import { ComingSoonButton } from './ComingSoonButton';
@@ -11,6 +12,8 @@ import { GenerateArticlePanel } from './GenerateArticlePanel';
 import { StepIndicator, STEP_LABELS } from './StepIndicator';
 import { fetchArticleTypes, fetchArticleDraft, createArticleDraft, updateArticleDraft } from './api';
 import { fetchAuthor } from '../authors/api';
+import { fetchAuthorSkills } from '../author-skills/api';
+import type { AuthorSkillSummary } from '../../shared/types/authorSkill';
 import { fetchProjects, fetchThemes, fetchTheme } from '../content/api';
 import type { Theme, Topic } from '../../shared/types/content';
 import { fetchProduct } from '../products/api';
@@ -71,6 +74,8 @@ export function NewArticle() {
   const [fields, setFields] = useState<WizardFields>(EMPTY_FIELDS);
   const [articleTypes, setArticleTypes] = useState<ArticleType[]>([]);
   const [authorDetail, setAuthorDetail] = useState<Author | null>(null);
+  /** The selected author's active skill documents. Null while unknown or unresolved. */
+  const [authorSkills, setAuthorSkills] = useState<AuthorSkillSummary[] | null>(null);
   const [productDetail, setProductDetail] = useState<ProductDetail | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -160,7 +165,20 @@ export function NewArticle() {
         setThemeTopics(detail.topics.filter((t) => t.isActive));
         // No authors configured for an area means "no restriction", matching
         // the backend rule rather than silently offering nobody.
+        const assigned = detail.authors.filter((a) => a.isActive);
         setThemeAuthorIds(detail.authors.length ? detail.authors.map((a) => a.id) : null);
+
+        // The thematic area identifies its author (Milestone 16). One active
+        // author assigned to the area means there is nothing to choose, so it
+        // is chosen — the picker stays below, and the choice is overridable.
+        //
+        // Only when the area has exactly one: the schema allows several
+        // authors per area on purpose, and picking between them is an
+        // editorial decision Cynth does not make. An author already chosen is
+        // never replaced.
+        if (assigned.length === 1) {
+          setFields((current) => (current.authorId === null ? { ...current, authorId: assigned[0].id } : current));
+        }
       })
       .catch(() => {
         setThemeTopics([]);
@@ -172,11 +190,18 @@ export function NewArticle() {
   useEffect(() => {
     if (fields.authorId === null) {
       setAuthorDetail(null);
+      setAuthorSkills(null);
       return;
     }
     fetchAuthor(fields.authorId)
       .then(setAuthorDetail)
       .catch(() => setAuthorDetail(null));
+
+    // Which skill documents will actually reach the model for this author.
+    // Active only, matching what the prompt builder reads.
+    fetchAuthorSkills({ authorId: fields.authorId, status: 'active' })
+      .then(setAuthorSkills)
+      .catch(() => setAuthorSkills(null));
   }, [fields.authorId]);
 
   // Same for the product summary used on the review screen.
@@ -310,7 +335,9 @@ export function NewArticle() {
                       const themeId = e.target.value ? Number(e.target.value) : null;
                       // Changing the area invalidates a topic chosen under the
                       // previous one, so clear it rather than send a mismatch.
-                      setFields((current) => ({ ...current, themeId, topicId: null }));
+                      // The author is cleared for the same reason: the new
+                      // area has its own, and the effect above selects it.
+                      setFields((current) => ({ ...current, themeId, topicId: null, authorId: null }));
                     }}
                   >
                     <option value="">No thematic area</option>
@@ -349,6 +376,16 @@ export function NewArticle() {
                     <div>
                       <dt>Writing Style</dt>
                       <dd>{authorDetail.writingStyle || '—'}</dd>
+                    </div>
+                    <div>
+                      <dt>Author Skill</dt>
+                      <dd>
+                        {authorSkills === null
+                          ? '—'
+                          : authorSkills.length === 0
+                            ? 'None — this author writes from the fields above alone.'
+                            : authorSkills.map((skill) => skill.name).join(', ')}
+                      </dd>
                     </div>
                   </dl>
                 )}
@@ -435,11 +472,22 @@ export function NewArticle() {
 
             {step === 6 && (
               <>
-                <h2>6. Product</h2>
-                <ProductPicker
-                  selectedProductId={fields.productId}
-                  onSelect={(productId) => updateField('productId', productId)}
-                />
+                <h2>6. Products</h2>
+                {/*
+                  An article can carry several products (Milestone 17). The
+                  single-product picker below is kept for drafts created before
+                  that, and is hidden once anything is attached the new way.
+                */}
+                <ArticleProductsPanel articleId={draftId} />
+                {draftId !== null && fields.productId !== null && (
+                  <details className="wizard-legacy-product">
+                    <summary>This draft also has a single product from the earlier workflow</summary>
+                    <ProductPicker
+                      selectedProductId={fields.productId}
+                      onSelect={(productId) => updateField('productId', productId)}
+                    />
+                  </details>
+                )}
               </>
             )}
 

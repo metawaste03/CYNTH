@@ -4,6 +4,7 @@ import { notFound } from './shared/middleware/notFound.js';
 import { errorHandler } from './shared/middleware/errorHandler.js';
 import { initializeDatabase, closeDatabase, DATABASE_PATH } from './shared/database/index.js';
 import { authorsRouter } from './features/authors/authors.routes.js';
+import { authorSkillsRouter } from './features/authors/authorSkills.routes.js';
 import { productsRouter } from './features/products/products.routes.js';
 import { ensureProductUploadsDir, UPLOADS_ROOT } from './features/products/products.upload.js';
 import { articleTypesRouter } from './features/article-types/article-types.routes.js';
@@ -14,6 +15,15 @@ import { modelRouterRouter } from './features/model-router/modelRouter.routes.js
 import { contentRouter } from './features/content/content.routes.js';
 import { generationRouter } from './features/generation/generation.routes.js';
 import { cmsRouter } from './features/cms/cms.routes.js';
+import { seoRouter } from './features/seo/seo.routes.js';
+import { qualityGateRouter } from './features/quality-gate/qualityGate.routes.js';
+import { webIntelligenceRouter } from './features/web-intelligence/webIntelligence.routes.js';
+import { productResearchRouter } from './features/product-research/productResearch.routes.js';
+import { amazonRouter } from './features/product-research/amazon/amazon.routes.js';
+import { mediaRouter } from './features/media/media.routes.js';
+import { imagesRouter } from './features/images/images.routes.js';
+import { pipelineRouter } from './features/pipeline/pipeline.routes.js';
+import { ensureMediaUploadsDir } from './features/media/media.upload.js';
 import { loadSecrets } from './shared/secrets/secretStore.js';
 import { backfillMissingSlugs } from './features/articles/articles.repository.js';
 import { serveBuiltClient } from './shared/static/clientStatic.js';
@@ -46,7 +56,14 @@ console.log(
     : `Content project already configured (${dbStatus.themeCount} thematic areas) — skipped seeding.`,
 );
 
+console.log(
+  dbStatus.templatesSeeded > 0
+    ? `Seeded ${dbStatus.templatesSeeded} article template(s).`
+    : 'Article templates already present — skipped seeding.',
+);
+
 ensureProductUploadsDir();
+ensureMediaUploadsDir();
 console.log(`Product image uploads stored under ${UPLOADS_ROOT}`);
 
 /** When this process started, so health can report how long it has been up. */
@@ -86,6 +103,9 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/authors', authorsRouter);
+// Author skills: the long-form authoring documents, and the Author folder
+// they are imported from and exported back to.
+app.use('/api/author-skills', authorSkillsRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/article-types', articleTypesRouter);
 app.use('/api/dashboard', dashboardRouter);
@@ -98,6 +118,31 @@ app.use('/api/content', contentRouter);
 app.use('/api/generation', generationRouter);
 // CMS connections (WordPress first). Article pushes live on /api/articles.
 app.use('/api/cms', cmsRouter);
+// The SEO Engine: configuration, analysis, findings, recommendations, gate.
+app.use('/api/seo', seoRouter);
+// The Quality Gate: article readiness, reported alongside SEO status and
+// deliberately separate from it — an article can pass one and fail the other.
+app.use('/api/quality-gate', qualityGateRouter);
+// Web intelligence foundation: authorised web sources and backlink
+// opportunities. There is no crawler — see web-intelligence/retrievers/.
+app.use('/api/web-intelligence', webIntelligenceRouter);
+// Product research: reading a product page the user named, working out what
+// the product is for, and attaching it to a draft. Never rewrites the
+// affiliate link the user supplied.
+app.use('/api/product-research', productResearchRouter);
+// Amazon Creators API: Amazon's official product-data service, and the only
+// way Cynth obtains Amazon product data. Credentials live in the secret store.
+app.use('/api/amazon', amazonRouter);
+// The media library: images the editor uploads for ARTICLES, as distinct from
+// product images. Cynth proposes a match and the editor confirms it.
+app.use('/api/media', mediaRouter);
+// Featured images. Suggests from the library first, and only draws a new one
+// when asked — image models are priced per image, so this path always costs
+// something and is never reached by the pipeline on its own.
+app.use('/api/featured-image', imagesRouter);
+// The editorial pipeline: theme in, researched and reviewed article out.
+// Cynth owns sequencing, state, idempotency and the revision cap.
+app.use('/api/pipeline', pipelineRouter);
 
 /**
  * The built client, in production only.

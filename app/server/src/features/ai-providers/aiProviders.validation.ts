@@ -13,8 +13,35 @@ export interface ProviderInput {
 export interface ModelInput {
   modelName: string;
   displayName: string | null;
-  purpose: string | null;
+  /** The jobs this model is registered for. May be empty; may hold several. */
+  purposes: string[];
   isEnabled: boolean;
+}
+
+/**
+ * Reads the capability set off a request.
+ *
+ * Accepts `purposes: string[]` (Milestone 15) and, so an older client keeps
+ * working, a single `purpose: string`. Every value is checked against the
+ * built-in list — an unknown capability is refused rather than stored,
+ * because a capability nothing routes to is worse than none.
+ */
+function readPurposes(input: Record<string, unknown>, errors: string[]): string[] {
+  const raw: unknown[] = Array.isArray(input.purposes)
+    ? input.purposes
+    : input.purpose !== undefined && input.purpose !== null && input.purpose !== ''
+      ? [input.purpose]
+      : [];
+
+  const purposes: string[] = [];
+  for (const value of raw) {
+    if (!isValidPurpose(value)) {
+      errors.push(`"${String(value)}" is not one of Cynth's model capabilities.`);
+      continue;
+    }
+    if (!purposes.includes(value)) purposes.push(value);
+  }
+  return purposes;
 }
 
 interface ValidationResult<T> {
@@ -76,14 +103,7 @@ export function validateModelInput(body: unknown): ValidationResult<ModelInput> 
     errors.push('displayName must be text.');
   }
 
-  let purpose: string | null = null;
-  if (input.purpose !== undefined && input.purpose !== null && input.purpose !== '') {
-    if (!isValidPurpose(input.purpose)) {
-      errors.push('purpose must be one of the built-in model purposes.');
-    } else {
-      purpose = input.purpose;
-    }
-  }
+  const purposes = readPurposes(input, errors);
 
   if (input.isEnabled !== undefined && typeof input.isEnabled !== 'boolean') {
     errors.push('isEnabled must be true or false.');
@@ -96,7 +116,7 @@ export function validateModelInput(body: unknown): ValidationResult<ModelInput> 
     value: {
       modelName,
       displayName: (input.displayName as string | undefined)?.trim() || null,
-      purpose,
+      purposes,
       isEnabled: input.isEnabled === undefined ? true : (input.isEnabled as boolean),
     },
   };
@@ -106,8 +126,14 @@ export interface CatalogModelInput {
   /** The model id exactly as the provider's catalogue publishes it. */
   modelName: string;
   displayName: string | null;
-  purpose: string | null;
+  purposes: string[];
   isEnabled: boolean;
+  /**
+   * Permission to send one minimal, real request to the model as part of
+   * validating it. Required before a PAID model is ever contacted — see
+   * modelValidation.service.ts. Free models validate live without it.
+   */
+  confirmLiveTest: boolean;
 }
 
 /**
@@ -133,14 +159,7 @@ export function validateCatalogModelInput(body: unknown): ValidationResult<Catal
     errors.push('displayName must be text.');
   }
 
-  let purpose: string | null = null;
-  if (input.purpose !== undefined && input.purpose !== null && input.purpose !== '') {
-    if (!isValidPurpose(input.purpose)) {
-      errors.push('purpose must be one of the built-in model purposes.');
-    } else {
-      purpose = input.purpose;
-    }
-  }
+  const purposes = readPurposes(input, errors);
 
   if (input.isEnabled !== undefined && typeof input.isEnabled !== 'boolean') {
     errors.push('isEnabled must be true or false.');
@@ -153,8 +172,10 @@ export function validateCatalogModelInput(body: unknown): ValidationResult<Catal
     value: {
       modelName,
       displayName: (input.displayName as string | undefined)?.trim() || null,
-      purpose,
+      purposes,
       isEnabled: input.isEnabled === undefined ? true : (input.isEnabled as boolean),
+      // Defaults to false: permission to spend must be given, never assumed.
+      confirmLiveTest: input.confirmLiveTest === true,
     },
   };
 }

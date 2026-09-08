@@ -150,10 +150,19 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
     loadHistory();
   }, [loadHistory]);
 
-  // The models available to choose from. A failure here is not fatal: without
-  // a picker the configured default still works.
+  /**
+   * The models available to choose from.
+   *
+   * PURPOSE FILTERING (Milestone 15): only models registered for Article
+   * Generation. An SEO reviewer is a different job with a different best
+   * answer, and offering every registered model here hid that — the whole
+   * reason a model now carries a capability set.
+   *
+   * A failure here is not fatal: without a picker the configured default
+   * still works.
+   */
   useEffect(() => {
-    fetchSelectableModels()
+    fetchSelectableModels('article_generation')
       .then(setSelectableModels)
       .catch(() => setSelectableModels([]));
   }, []);

@@ -31,6 +31,10 @@ const publish = await import('../src/features/cms/cmsPublish.service.js');
 const { articleBodyToHtml } = await import('../src/features/cms/articleMarkup.js');
 const { wordpressConnector } = await import('../src/features/cms/connectors/wordpressConnector.js');
 const secrets = await import('../src/shared/secrets/secretStore.js');
+const seoAnalysis = await import('../src/features/seo/seoAnalysis.service.js');
+const authorsRepo = await import('../src/features/authors/authors.repository.js');
+const mediaRepo = await import('../src/features/media/media.repository.js');
+const { MEDIA_IMAGES_DIR, ensureMediaUploadsDir } = await import('../src/features/media/media.upload.js');
 
 /* -------------------------------------------------------- mock WordPress */
 
@@ -46,27 +50,43 @@ interface MockPost {
   slug: string;
   author?: number;
   excerpt?: string;
+  featuredMedia?: number;
+}
+
+interface MockMedia {
+  id: number;
+  filename: string | null;
+  mimeType: string;
+  bytes: number;
+  altText: string | null;
 }
 
 /** Mock server state, resettable between tests. */
 const state = {
   posts: new Map<number, MockPost>(),
+  media: new Map<number, MockMedia>(),
   nextId: 100,
+  nextMediaId: 500,
   /** Every write body the mock received, so tests can assert on what was sent. */
   writes: [] as Record<string, unknown>[],
   /** Forced failure modes, for the failure-path tests. */
   rejectAuth: false,
   hideRestApi: false,
   accountCanPost: true,
+  /** When false the media endpoint refuses, so the "upload fails" path can be tested. */
+  acceptUploads: true,
 };
 
 function resetMock() {
   state.posts.clear();
+  state.media.clear();
   state.nextId = 100;
+  state.nextMediaId = 500;
   state.writes = [];
   state.rejectAuth = false;
   state.hideRestApi = false;
   state.accountCanPost = true;
+  state.acceptUploads = true;
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown) {
@@ -75,9 +95,11 @@ function send(res: http.ServerResponse, status: number, body: unknown) {
 }
 
 const mock = http.createServer((req, res) => {
-  let raw = '';
-  req.on('data', (chunk) => (raw += chunk));
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
+    const rawBuffer = Buffer.concat(chunks);
+    const raw = rawBuffer.toString('utf8');
     const url = new URL(req.url ?? '/', 'http://mock');
     const authorized = req.headers.authorization === EXPECTED_AUTH && !state.rejectAuth;
 
@@ -105,6 +127,39 @@ const mock = http.createServer((req, res) => {
         { id: 1, name: 'Cynth Test Account', slug: 'cynth-test' },
         { id: 7, name: 'Editorial Desk', slug: 'editorial' },
       ]);
+    }
+
+    // --- media ---
+    // A featured image arrives as a raw body with the filename in
+    // content-disposition, which is what the REST API accepts and what saves
+    // the connector assembling a multipart request by hand.
+    if (url.pathname === '/wp-json/wp/v2/media' && req.method === 'POST') {
+      if (!authorized) return send(res, 401, { code: 'incorrect_password', message: 'Incorrect password.' });
+      if (!state.acceptUploads) {
+        return send(res, 403, { code: 'rest_cannot_create', message: 'Sorry, you are not allowed to upload files.' });
+      }
+
+      const disposition = String(req.headers['content-disposition'] ?? '');
+      const media = {
+        id: state.nextMediaId++,
+        filename: /filename="([^"]*)"/.exec(disposition)?.[1] ?? null,
+        mimeType: String(req.headers['content-type'] ?? ''),
+        bytes: rawBuffer.length,
+        altText: null as string | null,
+      };
+      state.media.set(media.id, media);
+      return send(res, 201, { id: media.id, source_url: `http://mock.local/uploads/${media.filename}` });
+    }
+
+    const mediaMatch = url.pathname.match(/^\/wp-json\/wp\/v2\/media\/(\d+)$/);
+    if (mediaMatch) {
+      if (!authorized) return send(res, 401, { code: 'incorrect_password', message: 'Incorrect password.' });
+      const media = state.media.get(Number(mediaMatch[1]));
+      if (!media) return send(res, 404, { code: 'rest_post_invalid_id', message: 'Invalid attachment ID.' });
+
+      const body = JSON.parse(raw || '{}') as Record<string, unknown>;
+      if (typeof body.alt_text === 'string') media.altText = body.alt_text;
+      return send(res, 200, { id: media.id, alt_text: media.altText });
     }
 
     // --- posts ---
@@ -148,6 +203,8 @@ const mock = http.createServer((req, res) => {
       existing.title = String(body.title ?? existing.title);
       existing.content = String(body.content ?? existing.content);
       if (body.slug !== undefined) existing.slug = String(body.slug);
+      if (body.excerpt !== undefined) existing.excerpt = String(body.excerpt);
+      if (body.featured_media !== undefined) existing.featuredMedia = Number(body.featured_media);
       return send(res, 200, serializePost(existing));
     }
 
@@ -199,10 +256,19 @@ const GENERATED_BODY = [
   '> A quoted line.',
 ].join('\n');
 
-function makeGeneratedArticle(title: string) {
+/**
+ * A generated article that has passed the SEO gate.
+ *
+ * The deterministic SEO analysis is run deliberately rather than the gate
+ * being switched off: since Milestone 14 an article reaches a CMS by way of
+ * SEO review, and these tests should exercise the flow the application
+ * actually has. The analysis is deterministic only, so NO AI PROVIDER IS
+ * CONTACTED and nothing here can cost money.
+ */
+async function makeGeneratedArticle(title: string, authorId: number | null = null) {
   const article = articlesRepo.createArticleDraft({
     articleTypeId: 1,
-    authorId: null,
+    authorId,
     productId: null,
     projectId: null,
     themeId: null,
@@ -226,7 +292,48 @@ function makeGeneratedArticle(title: string) {
     model: 'mock-model',
   });
 
+  await seoAnalysis.runSeoAnalysis(article.id);
   return articlesRepo.getArticleById(article.id)!;
+}
+
+/**
+ * A generated article carrying a real featured image on disk.
+ *
+ * A genuine file, not a stub record: the connector reads bytes at upload
+ * time, so a test that never wrote a file would pass while proving nothing
+ * about the path that matters.
+ */
+async function makeGeneratedArticleWithImage(
+  title: string,
+  filename: string,
+  altText: string | null,
+  options: { deleteFile?: boolean } = {},
+) {
+  const article = await makeGeneratedArticle(title);
+
+  ensureMediaUploadsDir();
+  const stored = `${Date.now()}-${filename}`;
+  const filePath = path.join(MEDIA_IMAGES_DIR, stored);
+  // A one-pixel PNG. Small, but real bytes with a real signature.
+  fs.writeFileSync(
+    filePath,
+    Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+  );
+
+  const asset = mediaRepo.createMedia({
+    filePath: `uploads/media/${stored}`,
+    originalFilename: filename,
+    mimeType: 'image/png',
+    byteSize: fs.statSync(filePath).size,
+    title: filename,
+    altText,
+  } as never);
+
+  mediaRepo.attachMedia({ articleId: article.id, mediaId: asset.id, role: 'featured' });
+
+  if (options.deleteFile) fs.rmSync(filePath, { force: true });
+
+  return article;
 }
 
 test.after(() => {
@@ -272,8 +379,8 @@ test('MAPPING: ordinary prose containing numbers survives inline formatting', ()
 
 /* ==================== Article -> Draft field mapping ==================== */
 
-test('MAPPING: Cynth fields map onto the CMS payload, and nothing is invented', () => {
-  const article = makeGeneratedArticle('An Editor Working Title');
+test('MAPPING: Cynth fields map onto the CMS payload, and nothing is invented', async () => {
+  const article = await makeGeneratedArticle('An Editor Working Title');
   const payload = publish.buildDraftPayload(article, connections.getConnectionById(connection.id)!);
 
   assert.equal(payload.title, 'An Editor Working Title', 'the editor’s working title wins');
@@ -283,11 +390,14 @@ test('MAPPING: Cynth fields map onto the CMS payload, and nothing is invented', 
 
   // The two Cynth has no authoritative value for.
   assert.equal(payload.excerpt, null, 'no excerpt is invented');
-  assert.equal(payload.seo, null, 'SEO metadata is the next milestone’s to supply');
+  // The SEO engine supplies this now (Milestone 14), but only from values a
+  // human owns. This article has no SEO metadata, so none is sent — an
+  // empty string here would overwrite whatever a human wrote in the CMS.
+  assert.equal(payload.seo, null, 'no SEO metadata is invented when Cynth holds none');
 });
 
-test('MAPPING: the model’s title is used only when there is no working title', () => {
-  const article = makeGeneratedArticle('');
+test('MAPPING: the model’s title is used only when there is no working title', async () => {
+  const article = await makeGeneratedArticle('');
   const payload = publish.buildDraftPayload(article, connections.getConnectionById(connection.id)!);
   assert.equal(payload.title, 'A Model-Written Title');
 });
@@ -417,7 +527,7 @@ test('CONNECTION: the result is recorded on the connection for the settings scre
 
 test('PUSH: an article becomes a WordPress DRAFT, and the post id is persisted', async () => {
   resetMock();
-  const article = makeGeneratedArticle('First Push Article');
+  const article = await makeGeneratedArticle('First Push Article');
 
   const result = await publish.pushArticle(article.id, connection.id, 'create');
 
@@ -441,7 +551,7 @@ test('PUSH: an article becomes a WordPress DRAFT, and the post id is persisted',
 
 test('PUSH: the article’s own status is untouched — pushing is not publishing', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Status Untouched');
+  const article = await makeGeneratedArticle('Status Untouched');
 
   await publish.pushArticle(article.id, connection.id, 'create');
 
@@ -451,7 +561,7 @@ test('PUSH: the article’s own status is untouched — pushing is not publishin
 
 test('PUSH: the mapped fields arrive at WordPress intact', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Mapped Fields Article');
+  const article = await makeGeneratedArticle('Mapped Fields Article');
 
   await publish.pushArticle(article.id, connection.id, 'create');
 
@@ -468,7 +578,7 @@ test('PUSH: a configured author mapping is applied', async () => {
   resetMock();
   connections.setConnectionAuthorMapping(connection.id, '7', 'Editorial Desk');
 
-  const article = makeGeneratedArticle('Attributed Article');
+  const article = await makeGeneratedArticle('Attributed Article');
   await publish.pushArticle(article.id, connection.id, 'create');
 
   assert.equal(state.writes[0].author, 7);
@@ -476,11 +586,148 @@ test('PUSH: a configured author mapping is applied', async () => {
   connections.setConnectionAuthorMapping(connection.id, null, null);
 });
 
+test('PUSH: an article author’s own CMS user beats the connection default', async () => {
+  resetMock();
+  connections.setConnectionAuthorMapping(connection.id, '7', 'Editorial Desk');
+
+  const author = authorsRepo.createAuthor({
+    name: 'Mapped Author',
+    category: 'Sleep & Recovery',
+  } as never);
+  dbModule
+    .getDatabase()
+    .prepare('UPDATE authors SET remote_author_id = ? WHERE id = ?')
+    .run('42', author.id);
+
+  const article = await makeGeneratedArticle('Attributed To Its Author', author.id);
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  assert.equal(state.writes[0].author, 42, 'the article’s own author is used, not the connection default');
+
+  connections.setConnectionAuthorMapping(connection.id, null, null);
+});
+
+test('PUSH: an author with no mapping still falls back to the connection default', async () => {
+  resetMock();
+  connections.setConnectionAuthorMapping(connection.id, '7', 'Editorial Desk');
+
+  const author = authorsRepo.createAuthor({ name: 'Unmapped Author', category: null } as never);
+  const article = await makeGeneratedArticle('Falls Back', author.id);
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  assert.equal(state.writes[0].author, 7, 'an unmapped author behaves exactly as before');
+
+  connections.setConnectionAuthorMapping(connection.id, null, null);
+});
+
+/* ==================== EXCERPT ========================================== */
+
+test('PUSH: an authored excerpt is sent as the excerpt', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Has A Standfirst');
+  dbModule
+    .getDatabase()
+    .prepare('UPDATE articles SET excerpt = ? WHERE id = ?')
+    .run('  A short, authored standfirst.  ', article.id);
+
+  const updated = articlesRepo.getArticleById(article.id)!;
+  const payload = publish.buildDraftPayload(updated, connections.getConnectionById(connection.id)!);
+
+  assert.equal(payload.excerpt, 'A short, authored standfirst.', 'sent, and trimmed');
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+  assert.equal(state.writes[0].excerpt, 'A short, authored standfirst.');
+});
+
+test('PUSH: an article with no excerpt omits the field rather than clearing one', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('No Standfirst');
+  const payload = publish.buildDraftPayload(article, connections.getConnectionById(connection.id)!);
+
+  assert.equal(payload.excerpt, null);
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+  assert.ok(
+    !('excerpt' in state.writes[0]),
+    'the key must be absent, so an excerpt written in WordPress survives a push',
+  );
+});
+
+/* ==================== FEATURED IMAGE =================================== */
+
+test('PUSH: a featured image is uploaded and attached to the draft', async () => {
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('Has A Hero', 'hero-shot.png', 'A made bed at dawn');
+
+  const post = await publish.pushArticle(article.id, connection.id, 'create');
+
+  assert.equal(state.media.size, 1, 'exactly one upload');
+  const media = [...state.media.values()][0];
+  assert.equal(media.filename, 'hero-shot.png', 'the filename reaches WordPress');
+  assert.ok(media.bytes > 0, 'the real bytes were sent');
+  assert.equal(media.altText, 'A made bed at dawn', 'alt text is written when the editor wrote some');
+
+  const stored = state.posts.get(Number(post.post.id))!;
+  assert.equal(stored.featuredMedia, media.id, 'and the post points at it');
+});
+
+test('PUSH: every write made while attaching an image still asks for a draft', async () => {
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('Draft Only', 'x.png', null);
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  // The mock asserts this for itself on every post write, but stating it here
+  // means a future change to the attach step fails on an obvious test rather
+  // than inside the mock.
+  for (const write of state.writes) {
+    assert.equal(write.status, 'draft');
+  }
+});
+
+test('PUSH: an image with no alt text is uploaded without inventing any', async () => {
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('No Alt', 'plain.png', null);
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  const media = [...state.media.values()][0];
+  assert.equal(media.altText, null, 'alt text is left unset rather than guessed at');
+});
+
+test('PUSH: a rejected upload leaves the article safely in WordPress without its image', async () => {
+  resetMock();
+  state.acceptUploads = false;
+
+  const article = await makeGeneratedArticleWithImage('Upload Refused', 'nope.png', null);
+  const post = await publish.pushArticle(article.id, connection.id, 'create');
+
+  // The body is what matters and it is already there. Failing the push would
+  // invite a retry that creates a second copy of an article that exists.
+  const stored = state.posts.get(Number(post.post.id))!;
+  assert.equal(stored.featuredMedia, undefined, 'no image attached');
+  assert.ok(stored.content.length > 0, 'but the article itself arrived intact');
+  assert.equal(links.listLinksForArticle(article.id).length, 1, 'and the push is recorded as a success');
+});
+
+test('PUSH: a featured image whose file has vanished does not block the push', async () => {
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('Missing File', 'gone.png', null, { deleteFile: true });
+
+  const payload = publish.buildDraftPayload(
+    articlesRepo.getArticleById(article.id)!,
+    connections.getConnectionById(connection.id)!,
+  );
+  assert.equal(payload.featuredImage, null, 'a record pointing at no file yields no image');
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+  assert.equal(state.media.size, 0, 'nothing was uploaded');
+  assert.equal(links.listLinksForArticle(article.id).length, 1, 'and the article still went');
+});
+
 /* ==================== DUPLICATE PROTECTION ============================== */
 
 test('DUPLICATES: pushing twice with mode "create" is refused, not duplicated', async () => {
   resetMock();
-  const article = makeGeneratedArticle('No Duplicates Article');
+  const article = await makeGeneratedArticle('No Duplicates Article');
 
   await publish.pushArticle(article.id, connection.id, 'create');
   assert.equal(state.posts.size, 1);
@@ -497,7 +744,7 @@ test('DUPLICATES: pushing twice with mode "create" is refused, not duplicated', 
 
 test('DUPLICATES: the preflight says "update" once an article has been pushed', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Preflight Action Article');
+  const article = await makeGeneratedArticle('Preflight Action Article');
 
   const before = publish.getPushPreflight(article.id, connection.id);
   assert.equal(before.action, 'create', 'a fresh article creates');
@@ -513,7 +760,7 @@ test('DUPLICATES: the preflight says "update" once an article has been pushed', 
 
 test('UPDATE: updating modifies the existing post in place', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Updatable Article');
+  const article = await makeGeneratedArticle('Updatable Article');
 
   const created = await publish.pushArticle(article.id, connection.id, 'create');
 
@@ -523,6 +770,11 @@ test('UPDATE: updating modifies the existing post in place', async () => {
     provider: 'Mock Provider',
     model: 'mock-model',
   });
+
+  // The article changed, so the stored SEO analysis no longer describes it.
+  // Re-running is the flow, not a workaround: the gate is configured to
+  // refuse an analysis that has gone stale.
+  await seoAnalysis.runSeoAnalysis(article.id);
 
   const updated = await publish.pushArticle(article.id, connection.id, 'update');
 
@@ -535,7 +787,7 @@ test('UPDATE: updating modifies the existing post in place', async () => {
 
 test('UPDATE: updating an article that was never pushed is refused, not silently created', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Never Pushed Article');
+  const article = await makeGeneratedArticle('Never Pushed Article');
 
   await assert.rejects(
     () => publish.pushArticle(article.id, connection.id, 'update'),
@@ -546,7 +798,7 @@ test('UPDATE: updating an article that was never pushed is refused, not silently
 
 test('UPDATE: Cynth refuses to modify a post a human has published', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Published Elsewhere Article');
+  const article = await makeGeneratedArticle('Published Elsewhere Article');
 
   const created = await publish.pushArticle(article.id, connection.id, 'create');
 
@@ -566,7 +818,7 @@ test('UPDATE: Cynth refuses to modify a post a human has published', async () =>
 
 test('UPDATE: a post deleted in WordPress is reported, not silently recreated', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Deleted Remotely Article');
+  const article = await makeGeneratedArticle('Deleted Remotely Article');
 
   const created = await publish.pushArticle(article.id, connection.id, 'create');
   state.posts.delete(Number(created.post.id));
@@ -584,7 +836,7 @@ test('UPDATE: a post deleted in WordPress is reported, not silently recreated', 
 
 test('REFRESH: re-reading picks up a status a human changed in WordPress', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Refreshable Article');
+  const article = await makeGeneratedArticle('Refreshable Article');
 
   const created = await publish.pushArticle(article.id, connection.id, 'create');
   state.posts.get(Number(created.post.id))!.status = 'publish';
@@ -597,7 +849,7 @@ test('REFRESH: re-reading picks up a status a human changed in WordPress', async
 
 test('HISTORY: pushes, updates and failures are all recorded', async () => {
   resetMock();
-  const article = makeGeneratedArticle('History Article');
+  const article = await makeGeneratedArticle('History Article');
 
   await publish.pushArticle(article.id, connection.id, 'create');
   await publish.pushArticle(article.id, connection.id, 'update');
@@ -653,7 +905,7 @@ test('SECURITY: no connection DTO carries the credential', () => {
 
 test('SECURITY: the preflight and push results carry no credential', async () => {
   resetMock();
-  const article = makeGeneratedArticle('Security Article');
+  const article = await makeGeneratedArticle('Security Article');
 
   const preflight = publish.getPushPreflight(article.id, connection.id);
   assert.ok(!JSON.stringify(preflight).includes(TEST_APP_PASSWORD.replace(/\s+/g, '')));

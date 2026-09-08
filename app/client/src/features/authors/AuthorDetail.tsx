@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
 import { AuthorThemes } from './AuthorThemes';
+import { AuthorSkillsPanel } from '../author-skills/AuthorSkillsPanel';
 import {
   fetchAuthor,
   deleteAuthor,
@@ -190,6 +191,11 @@ export function AuthorDetail() {
           <Field label="Editorial Principles" value={author.editorialPrinciples} />
           <Field label="Boundaries" value={author.boundaries} />
         </dl>
+      </section>
+
+      <section className="author-detail__section">
+        <h2>Author Skill</h2>
+        <AuthorSkillsPanel authorId={author.id} />
       </section>
 
       <section className="author-detail__section">

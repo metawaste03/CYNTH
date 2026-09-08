@@ -43,6 +43,8 @@ export interface RoutedModel {
   completionPrice: number | null;
   /** A flat per-request charge, where the catalogue publishes one. */
   requestPrice: number | null;
+  /** What image output costs, where the catalogue publishes it. */
+  imageOutputPrice: number | null;
   contextLength: number | null;
   /** Derived from the prices above, never from the model's name. */
   costClass: ModelCostClass;
@@ -76,11 +78,13 @@ function mapRoutedModel(row: AiProviderModelRow): RoutedModel {
     promptPrice: row.prompt_price,
     completionPrice: row.completion_price,
     requestPrice: row.request_price,
+    imageOutputPrice: row.image_output_price,
     contextLength: row.context_length,
     costClass: classifyModel({
       promptPrice: row.prompt_price,
       completionPrice: row.completion_price,
       requestPrice: row.request_price,
+      imageOutputPrice: row.image_output_price,
     }),
     pricingSyncedAt: row.pricing_synced_at,
   };
@@ -102,8 +106,18 @@ export function routeForPurpose(purpose: string): ModelRouteResult | ModelRouteF
   }
 
   const db = getDatabase();
+  /**
+   * The default now lives on the capability, not on the model row
+   * (Milestone 15): a model may hold several capabilities and be the default
+   * for some of them, so "which model handles SEO Review" is a question about
+   * ai_model_capabilities.
+   */
   const modelRow = db
-    .prepare('SELECT * FROM ai_provider_models WHERE purpose = ? AND is_default_for_purpose = 1')
+    .prepare(`
+      SELECT m.* FROM ai_provider_models m
+      JOIN ai_model_capabilities c ON c.model_id = m.id
+      WHERE c.purpose = ? AND c.is_default_for_purpose = 1
+    `)
     .get(purpose) as unknown as AiProviderModelRow | undefined;
 
   if (!modelRow) return unconfigured(purpose, 'No default model is set for this purpose yet.');
@@ -158,6 +172,25 @@ export function routeForModel(purpose: string, modelId: number): ModelRouteResul
   }
   if (modelRow.is_enabled !== 1) {
     return unconfigured(purpose, `The selected model (${modelRow.model_name}) is disabled in the model registry.`);
+  }
+
+  /**
+   * CAPABILITY CHECK (Milestone 15).
+   *
+   * The pickers already filter by capability, so this only fires on a request
+   * that did not come from one. Enforcing it here rather than trusting the UI
+   * is what makes "SEO models and article models are different" a property of
+   * the system instead of a property of one screen.
+   */
+  const holdsCapability = db
+    .prepare('SELECT id FROM ai_model_capabilities WHERE model_id = ? AND purpose = ?')
+    .get(modelRow.id, purpose);
+  if (!holdsCapability) {
+    return unconfigured(
+      purpose,
+      `${modelRow.model_name} is not registered for this task. Assign it that capability in Settings then ` +
+        `AI Providers, or choose a model that already has it.`,
+    );
   }
 
   return {

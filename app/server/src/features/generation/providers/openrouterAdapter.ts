@@ -1,6 +1,17 @@
-import type { GenerationRequest, ModelCapabilities, NormalizedGeneration, ProviderAdapter, ProviderCallContext, ProviderModelInfo } from '../generation.types.js';
+import type {
+  GeneratedImage,
+  GenerationRequest,
+  ImageGenerationRequest,
+  ModelCapabilities,
+  NormalizedGeneration,
+  NormalizedImageGeneration,
+  ProviderAdapter,
+  ProviderCallContext,
+  ProviderModelInfo,
+} from '../generation.types.js';
+import { GenerationError } from '../generation.errors.js';
 import { callChatCompletions } from './openAiCompatible.js';
-import { getJson, resolveBaseUrl } from './providerHttp.js';
+import { getJson, postJson, resolveBaseUrl, throwForFailedResponse } from './providerHttp.js';
 import { CATALOG_TIMEOUT_MS } from '../generation.constants.js';
 
 /**
@@ -14,7 +25,79 @@ export const openrouterAdapter: ProviderAdapter = {
   generate(request: GenerationRequest, context: ProviderCallContext): Promise<NormalizedGeneration> {
     return callChatCompletions('openrouter', { 'x-title': 'Cynth' }, request, context);
   },
+
+  generateImages(request: ImageGenerationRequest, context: ProviderCallContext): Promise<NormalizedImageGeneration> {
+    return generateImagesViaOpenRouter(request, context);
+  },
 };
+
+/* ---------------------------------------------------------------- images --- */
+
+/**
+ * OpenRouter's image endpoint.
+ *
+ * A different endpoint from chat completions, with a different billing model:
+ * images are priced per image, and the response reports what the call
+ * actually cost. Cynth records that reported figure rather than deriving one
+ * from tokens, because a per-image charge cannot be recovered from a token
+ * count. OpenRouter bills a generation in full or not at all — a failure is
+ * not charged — so there is no partial cost to account for.
+ *
+ * The bytes are decoded here and returned as a Buffer. The data URI the API
+ * sends never reaches the rest of Cynth, and a generated image is never
+ * referenced by a remote URL: either the file is on our disk or it does not
+ * exist.
+ */
+async function generateImagesViaOpenRouter(
+  request: ImageGenerationRequest,
+  context: ProviderCallContext,
+): Promise<NormalizedImageGeneration> {
+  const base = resolveBaseUrl(context.baseUrl, 'openrouter');
+
+  const response = await postJson(
+    `${base}/images`,
+    { authorization: `Bearer ${context.apiKey}`, 'x-title': 'Cynth' },
+    {
+      model: request.model,
+      prompt: request.prompt,
+      n: request.count,
+      ...(request.aspectRatio ? { aspect_ratio: request.aspectRatio } : {}),
+      output_format: 'png',
+    },
+    request.timeoutMs,
+  );
+
+  if (!response.ok) throwForFailedResponse(response, context.apiKey);
+
+  const data = Array.isArray(response.json?.data) ? (response.json!.data as unknown[]) : [];
+  const images: GeneratedImage[] = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    if (typeof record.b64_json !== 'string' || !record.b64_json) continue;
+
+    const decoded = Buffer.from(record.b64_json, 'base64');
+    if (decoded.length === 0) continue;
+
+    images.push({
+      data: decoded,
+      mimeType: typeof record.media_type === 'string' ? record.media_type : 'image/png',
+    });
+  }
+
+  if (images.length === 0) {
+    throw new GenerationError('empty_response', 'The provider returned no image data.');
+  }
+
+  const usage = response.json?.usage as Record<string, unknown> | undefined;
+  const cost = typeof usage?.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null;
+
+  return {
+    images,
+    reportedCost: cost,
+    reportedModel: typeof response.json?.model === 'string' ? response.json.model : null,
+  };
+}
 
 /* ------------------------------------------------------------- catalogue --- */
 
@@ -146,6 +229,7 @@ export function parseOpenRouterCatalog(body: Record<string, unknown> | null): Pr
         promptPrice: priceOf(entry.pricing, 'prompt'),
         completionPrice: priceOf(entry.pricing, 'completion'),
         requestPrice: priceOf(entry.pricing, 'request'),
+        imageOutputPrice: priceOf(entry.pricing, 'image_output'),
         contextLength: numberOf(entry.context_length),
         status: statusOf(entry),
         capabilities: capabilitiesOf(entry),
@@ -154,11 +238,49 @@ export function parseOpenRouterCatalog(body: Record<string, unknown> | null): Pr
     });
 }
 
+/**
+ * The catalogue, in TWO reads.
+ *
+ * `/models` on its own is not the whole roster. It answers with 431 models
+ * and only eleven of them produce images — the multimodal chat models.
+ * `/models?output_modalities=image` answers with 52, of which 41 appear
+ * NOWHERE in the first list: Seedream, Recraft, MAI-Image, Muse, Grok
+ * Imagine. A single read therefore hides most of the image models from the
+ * registry entirely, which is not something a user can diagnose from the UI —
+ * the model simply is not there.
+ *
+ * So both are read and merged by id, the plain catalogue winning on conflict
+ * because it is the one the provider serves by default. The second read is a
+ * metadata GET like the first: it costs nothing and generates nothing.
+ *
+ * If the image read fails, the plain catalogue is still returned. A provider
+ * that has no such filter, or a transient failure on the second call, must
+ * degrade to fewer models rather than to no catalogue at all.
+ */
 openrouterAdapter.listModels = async (context) => {
-  const url = `${resolveBaseUrl(context.baseUrl, 'openrouter')}/models`;
+  const base = resolveBaseUrl(context.baseUrl, 'openrouter');
   // The catalogue is public, but an authenticated read can return
   // account-specific availability, so send the key when there is one.
   const headers: Record<string, string> = context.apiKey ? { authorization: `Bearer ${context.apiKey}` } : {};
-  const response = await getJson(url, headers, CATALOG_TIMEOUT_MS);
-  return parseOpenRouterCatalog(response.json);
+
+  const response = await getJson(`${base}/models`, headers, CATALOG_TIMEOUT_MS);
+  const models = parseOpenRouterCatalog(response.json);
+
+  let imageModels: ProviderModelInfo[] = [];
+  try {
+    const imageResponse = await getJson(
+      `${base}/models?output_modalities=image`,
+      headers,
+      CATALOG_TIMEOUT_MS,
+    );
+    imageModels = parseOpenRouterCatalog(imageResponse.json);
+  } catch {
+    // Fewer models, not none.
+  }
+
+  const byId = new Map(models.map((model) => [model.id, model]));
+  for (const model of imageModels) {
+    if (!byId.has(model.id)) byId.set(model.id, model);
+  }
+  return [...byId.values()];
 };

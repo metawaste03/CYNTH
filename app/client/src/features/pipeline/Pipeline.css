@@ -1,0 +1,514 @@
+/* The editorial pipeline. Layered on Content.css. */
+
+.pipeline-muted {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.pipeline-stages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pipeline-stage {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: var(--space-2);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pipeline-stage:last-child {
+  border-bottom: 0;
+}
+
+.pipeline-stage__mark {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.pipeline-stage.is-success .pipeline-stage__mark {
+  color: var(--color-accent);
+}
+
+.pipeline-stage.is-failure .pipeline-stage__mark,
+.pipeline-stage.is-failure .pipeline-stage__label {
+  color: var(--color-danger, inherit);
+}
+
+/* A skipped stage is stated as skipped rather than left looking pending —
+   a pending revision that will never run implies work still to come. */
+.pipeline-stage.is-skipped {
+  opacity: 0.55;
+}
+
+.pipeline-stage.is-pending {
+  opacity: 0.7;
+}
+
+.pipeline-stage__label {
+  font-size: 0.9rem;
+}
+
+/* The cap, rendered as a fraction so the UI can never suggest an open loop. */
+.pipeline-stage__revision {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  letter-spacing: 0.03em;
+}
+
+.pipeline-stage__meta {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.pipeline-fallback {
+  padding: 0 6px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: 999px;
+}
+
+.pipeline-stage__error {
+  grid-column: 2 / -1;
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  color: var(--color-danger, var(--color-text-muted));
+}
+
+/* Terminal states are visually distinct from in-flight ones, because
+   "needs editorial attention" is a handover rather than a failure. */
+.pipeline-state--ready {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.pipeline-state--needs_editorial_attention {
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.pipeline-state--failed {
+  background: var(--color-danger-soft, transparent);
+  color: var(--color-danger, inherit);
+}
+
+/* --- role assignment ---------------------------------------------------- */
+
+.role-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.role-row:last-child {
+  border-bottom: 0;
+}
+
+.role-row__name {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.role-row__guidance {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.role-row select {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.role-row__label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 760px) {
+  .role-row {
+    grid-template-columns: 1fr;
+  }
+
+  .pipeline-stage {
+    grid-template-columns: 24px 1fr;
+  }
+
+  .pipeline-stage__meta {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+}
+
+/* ------------------------------------------------------------ checkpoints */
+
+/*
+ * The decision pane.
+ *
+ * Styled to read as a question rather than a form: the options carry their own
+ * reasoning, the recommendation is marked, and the two footer actions that
+ * cost money or end the questioning are visually quieter than the choice
+ * itself, so neither is the path of least resistance.
+ */
+.checkpoint {
+  border-left: 3px solid var(--color-accent);
+}
+
+.checkpoint-question {
+  font-size: 1.05rem;
+  margin: 0 0 1rem;
+}
+
+.checkpoint-lead {
+  margin: 0 0 0.5rem;
+}
+
+.checkpoint-subhead {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.checkpoint-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.checkpoint-option {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.85rem 1rem;
+  background: var(--color-surface);
+}
+
+.checkpoint-option.is-selected {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: 0 0 0 1px var(--color-accent) inset;
+}
+
+.checkpoint-option > label {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.checkpoint-option__title {
+  display: block;
+}
+
+.checkpoint-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.checkpoint-options--compact .checkpoint-option {
+  padding: 0.55rem 0.8rem;
+}
+
+.checkpoint-option__detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.2rem 0.9rem;
+  margin: 0.7rem 0 0;
+  font-size: 0.88rem;
+}
+
+.checkpoint-option__detail > div {
+  display: contents;
+}
+
+.checkpoint-option__detail dt {
+  font-weight: 600;
+  opacity: 0.65;
+}
+
+.checkpoint-option__detail dd {
+  margin: 0;
+}
+
+.checkpoint-option__summary {
+  margin: 0.7rem 0 0.3rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.checkpoint-custom {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 1rem 0 0.5rem;
+}
+
+.checkpoint-input {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+}
+
+.checkpoint-warning {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  color: var(--color-warning);
+  background: var(--color-warning-soft);
+  border: 1px solid var(--color-warning);
+}
+
+.checkpoint-context {
+  margin-top: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+  font-size: 0.9rem;
+}
+
+.checkpoint-context ul {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.checkpoint-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 1.2rem;
+}
+
+.checkpoint-footer {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.button--quiet {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  font-size: 0.88rem;
+}
+
+.status-badge--waiting {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
+
+/* A product row: the picture, the name, and what it is FOR. */
+.product-row > label {
+  align-items: center;
+}
+
+.product-row__image {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--color-surface-muted);
+  flex: none;
+}
+
+/* ---------------------------------------------------- product opportunities */
+
+/*
+ * The shopping brief. Visually distinct from the library list below it,
+ * because it is a different kind of thing: suggestions to act on elsewhere,
+ * not options to tick.
+ */
+.opportunity-brief {
+  padding: 0.9rem 1rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  margin-bottom: 1.4rem;
+}
+
+.opportunity-list {
+  list-style: none;
+  margin: 0.6rem 0 0.9rem;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.opportunity {
+  padding: 0.6rem 0.75rem;
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+  border-left: 3px solid var(--color-border);
+}
+
+.opportunity--high {
+  border-left-color: var(--color-accent);
+}
+
+.opportunity--low {
+  opacity: 0.8;
+}
+
+.opportunity__head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.opportunity__priority {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.opportunity__why {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.opportunity__terms {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.opportunity__term {
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.opportunity__term:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+/* ------------------------------------------------------- the spend gate --- */
+
+/*
+ * Deliberately loud. This is the only place in the pipeline screen where a
+ * click costs money, and it must not read as another progress note.
+ */
+.spend-confirm {
+  border-left: 3px solid var(--color-warning);
+}
+
+.spend-confirm__lead {
+  margin: 0 0 0.4rem;
+  font-size: 1.02rem;
+}
+
+.spend-confirm__figure {
+  margin: 0 0 0.8rem;
+  font-size: 1.05rem;
+}
+
+/* ------------------------------------------------- unfinished runs --- */
+
+/* Offered above the Start form. A stopped run keeps the stages it has already
+   paid for, so continuing has to look like the cheaper option it is. */
+.resume-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.resume-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+.resume-item.is-failed {
+  border-left-color: var(--color-warning);
+}
+
+.resume-item__main {
+  min-width: 0;
+}
+
+.resume-item__title {
+  font-weight: 600;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.resume-item__title:hover {
+  text-decoration: underline;
+}
+
+.resume-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.3rem 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.resume-item__spent {
+  color: var(--color-warning);
+}
+
+.resume-item__state {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.resume-item__actions {
+  flex-shrink: 0;
+}

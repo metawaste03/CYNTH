@@ -96,6 +96,19 @@ export function Dashboard() {
       action: { label: 'View Products', to: '/products' },
     },
     {
+      icon: 'media',
+      title: 'Media Library',
+      status:
+        summary === null
+          ? 'Loading…'
+          : summary.media.total === 0
+            ? 'No images yet'
+            : `${summary.media.total} image(s) · ${summary.media.filed} filed by area`,
+      description:
+        'Images for articles, filed by thematic area. Product images live with their product and are not counted here.',
+      action: { label: 'Open Media Library', to: '/media' },
+    },
+    {
       icon: 'seoReview',
       title: 'SEO Status',
       status: 'Not configured',

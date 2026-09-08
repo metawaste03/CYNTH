@@ -16,6 +16,7 @@ export type IconName =
   | 'settings'
   | 'system'
   | 'site'
+  | 'media'
   | 'menu'
   | 'close';
 
@@ -113,6 +114,14 @@ export function Icon({ name, ...rest }: IconProps) {
           <line x1="4" y1="6.5" x2="20" y2="6.5" />
           <line x1="4" y1="12" x2="20" y2="12" />
           <line x1="4" y1="17.5" x2="20" y2="17.5" />
+        </svg>
+      );
+    case 'media':
+      return (
+        <svg {...shared} {...rest} aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <circle cx="8.5" cy="10" r="1.6" />
+          <path d="M3.5 16.5 9 12l4 3.5 3-2.5 4.5 3.5" />
         </svg>
       );
     case 'close':

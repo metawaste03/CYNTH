@@ -11,6 +11,7 @@ import {
   DraftNotReadyError,
 } from '../generation/generation.service.js';
 import { isGenerationError } from '../generation/generation.errors.js';
+import { buildGenerationContext } from '../generation/generationContext.service.js';
 import { listGenerationHistoryForArticle } from '../generation/generationHistory.repository.js';
 import { isValidArticleStatus, ARTICLE_STATUSES } from './articles.constants.js';
 import { getProjectById, getThemeById, getTopicById, listThemesForAuthor } from '../content/content.repository.js';
@@ -113,6 +114,30 @@ articlesRouter.get('/:id', (req, res) => {
   res.json({ article });
 });
 
+/**
+ * The products this article places, resolved exactly as the CMS card resolves
+ * them — including the primary image.
+ *
+ * Exists so the preview can show a `[[product:id]]` marker as the card it will
+ * become. Before this, the marker rendered as literal text and the uploaded
+ * image appeared nowhere in Cynth, which read as "the images are never used"
+ * when in fact they were used only at push time.
+ *
+ * The affiliate URL is included because the card is a link and a preview of a
+ * card that cannot be clicked is not a preview of the card. It is the stored
+ * string, verbatim, exactly as the CMS renderer emits it.
+ */
+articlesRouter.get('/:id/products', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid draft id.'] });
+
+  const article = repo.getArticleById(id);
+  if (!article) return res.status(404).json({ errors: ['Draft not found.'] });
+
+  const context = buildGenerationContext(id);
+  res.json({ products: context?.products ?? [] });
+});
+
 articlesRouter.post('/', (req, res) => {
   const { errors, value } = validateArticleDraftInput(req.body);
   if (errors.length) return res.status(400).json({ errors });
@@ -158,6 +183,47 @@ articlesRouter.patch('/:id/status', (req, res) => {
   if (!article) return res.status(404).json({ errors: ['Article not found.'] });
 
   res.json({ article });
+});
+
+/**
+ * What deleting this draft would do. Free, and destroys nothing — the point
+ * is that the user sees the consequences before choosing.
+ */
+articlesRouter.get('/:id/deletion-preflight', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  const preflight = repo.getDeletionPreflight(id);
+  if (!preflight) return res.status(404).json({ errors: ['Article not found.'] });
+
+  res.json({ preflight });
+});
+
+/**
+ * Deletes a draft.
+ *
+ * `force` overrides the CMS-link blocker and nothing else. It is required
+ * rather than assumed, because Cynth cannot delete a remote post and the user
+ * is the only one who knows whether they have dealt with it.
+ */
+articlesRouter.delete('/:id', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  const preflight = repo.getDeletionPreflight(id);
+  if (!preflight) return res.status(404).json({ errors: ['Article not found.'] });
+
+  const force = req.query.force === 'true' || req.body?.force === true;
+  const result = repo.deleteArticle(id, { force });
+
+  if ('error' in result) {
+    // 409, not 400: the request is well-formed, the article's state is what
+    // refuses it. The preflight travels with the refusal so the UI can offer
+    // the override without a second round trip.
+    return res.status(409).json({ errors: [result.error], code: 'deletion_blocked', preflight });
+  }
+
+  res.status(204).end();
 });
 
 /**
