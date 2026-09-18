@@ -198,3 +198,35 @@
   color: var(--color-danger);
   font-size: 0.78rem;
 }
+
+/* The target site picker. Present only when more than one connection is
+   active — see WordPressPushPanel.tsx for why a single-site install gets no
+   dropdown at all. */
+.wp-push__target {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.wp-push__target label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
+.wp-push__target select {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.5rem;
+}
+
+/* The host, beside the connection's own label. Quieter than the name but
+   always present: the name is hand-written and two sites here differ by one
+   letter, so the host is what actually distinguishes them. */
+.wp-push__host {
+  color: var(--color-text-subtle);
+  font-variant-numeric: tabular-nums;
+}

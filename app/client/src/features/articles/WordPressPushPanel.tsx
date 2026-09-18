@@ -3,11 +3,12 @@ import { Link } from 'react-router-dom';
 import { ApiError } from '../../shared/services/apiClient';
 import {
   fetchArticlePushHistory,
+  fetchConnections,
   fetchPushPreflight,
   pushArticle,
   refreshArticleLink,
 } from '../wordpress/api';
-import type { CmsPushHistoryEntry, PushPreflight, PushResult } from '../../shared/types/cms';
+import type { CmsConnection, CmsPushHistoryEntry, PushPreflight, PushResult } from '../../shared/types/cms';
 import './WordPressPushPanel.css';
 
 /**
@@ -25,6 +26,20 @@ import './WordPressPushPanel.css';
  *      Push twice can never quietly produce two posts.
  *   3. It shows what will be sent before it is sent, so the mapping is never
  *      a surprise.
+ *
+ * WHICH SITE, CHOSEN PER PUSH. Every layer below this one has always taken a
+ * connection id — the route, the service, the client function — but this panel
+ * never passed one, so the server fell back to the default connection and the
+ * only reachable site was whichever one happened to be flagged default. With a
+ * local install and a production site both configured, that made production
+ * unreachable from the UI. The picker below closes that gap; it appears only
+ * when there is genuinely a choice to make.
+ *
+ * THE SITE IS NAMED BY ITS HOST, NOT ONLY BY ITS LABEL. Connection names are
+ * written by hand and drift — this account has "EveryFiveDays(Local)" and
+ * "EverFiveDays(Live)", one letter apart. A push to production must not depend
+ * on reading a label carefully, so the host appears beside every name and in
+ * the confirmation.
  */
 
 interface WordPressPushPanelProps {
@@ -37,6 +52,15 @@ function formatTimestamp(value: string | null): string {
   if (!value) return '—';
   const parsed = new Date(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+/** The bare host of a site URL, for telling two similarly named sites apart. */
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }
 
 /** WordPress's own status vocabulary, said in plain words. */
@@ -53,6 +77,10 @@ function describeRemoteStatus(status: string | null): string {
 
 export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelProps) {
   const [preflight, setPreflight] = useState<PushPreflight | null>(null);
+  const [connections, setConnections] = useState<CmsConnection[]>([]);
+  // null means "whatever the server considers default" — the behaviour before
+  // this picker existed, and still what a single-connection install gets.
+  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [history, setHistory] = useState<CmsPushHistoryEntry[]>([]);
   const [showMapping, setShowMapping] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -74,30 +102,53 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
 
   const load = useCallback(() => {
     setIsLoading(true);
-    fetchPushPreflight(articleId)
+    fetchPushPreflight(articleId, selectedId)
       .then((loaded) => {
         setPreflight(loaded);
         setLoadError(null);
+        // Adopt whichever connection the server resolved, so the select shows
+        // the site the preflight actually describes rather than an empty
+        // value. Without this the first render says "default" while the panel
+        // below is already describing a specific site.
+        setSelectedId((current) => current ?? loaded.connection?.id ?? null);
       })
       .catch((err) =>
         setLoadError(err instanceof ApiError ? err.errors.join(' ') : 'Could not check the WordPress connection.'),
       )
       .finally(() => setIsLoading(false));
-  }, [articleId]);
+  }, [articleId, selectedId]);
 
   useEffect(() => {
     load();
     loadHistory();
   }, [load, loadHistory]);
 
+  // Only connections that could actually receive a push are offered. An
+  // inactive one, or one with no stored credential, can only preflight into a
+  // refusal — and this account has a credential-less duplicate whose name
+  // differs from the working one by a pair of brackets, which is precisely the
+  // option someone would pick by mistake and then have to debug.
+  useEffect(() => {
+    fetchConnections()
+      .then((all) => setConnections(all.filter((c) => c.isActive && c.hasCredential)))
+      .catch(() => setConnections([]));
+  }, []);
+
   async function handlePush() {
     if (!preflight?.action || isPushing) return;
 
     // DUPLICATE PROTECTION, confirmed in words before anything leaves Cynth.
+    // The host is named as well as the label, because the decision being
+    // confirmed is really "local or production" and the labels are not
+    // reliable enough to carry that on their own.
+    const site = preflight.connection
+      ? `${preflight.connection.name} (${hostOf(preflight.connection.baseUrl)})`
+      : 'the configured site';
+
     const confirmation =
       preflight.action === 'create'
-        ? `Create a new draft post on ${preflight.connection?.name}? It will be a draft — nothing is published.`
-        : `Update the existing draft post ${preflight.link?.externalId} on ${preflight.connection?.name}? Its current content there will be replaced by this article.`;
+        ? `Create a new draft post on ${site}? It will be a draft — nothing is published.`
+        : `Update the existing draft post ${preflight.link?.externalId} on ${site}? Its current content there will be replaced by this article.`;
 
     if (!window.confirm(confirmation)) return;
 
@@ -106,7 +157,11 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
     setErrorCode(null);
 
     try {
-      const pushed = await pushArticle(articleId, preflight.action);
+      // The id the preflight actually resolved, not the select's value: those
+      // are the same except on a first render, and sending the article
+      // somewhere other than the site just described would be the worst
+      // possible mismatch.
+      const pushed = await pushArticle(articleId, preflight.action, preflight.connection?.id ?? selectedId);
       setResult(pushed);
       load();
       onPushed?.();
@@ -170,9 +225,41 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
         </div>
       ) : (
         <>
+          {/* Shown only when there is a choice to make. One connection needs
+              no dropdown, and adding one would imply a decision that is not
+              actually available. */}
+          {connections.length > 1 && (
+            <div className="wp-push__target">
+              <label htmlFor={`wp-push-target-${articleId}`}>Send to</label>
+              <select
+                id={`wp-push-target-${articleId}`}
+                value={selectedId ?? connection.id}
+                disabled={isPushing || isLoading}
+                onChange={(e) => {
+                  // Clearing the result matters: leaving a success notice from
+                  // the previous site visible while the panel now describes a
+                  // different one is how someone concludes they pushed live
+                  // when they pushed local.
+                  setResult(null);
+                  setErrors(null);
+                  setErrorCode(null);
+                  setSelectedId(Number(e.target.value));
+                }}
+              >
+                {connections.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} — {hostOf(c.baseUrl)}
+                    {c.isDefault ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <p className="wp-push__hint">
-            Sends this article to <strong>{connection.name}</strong> as a WordPress <strong>draft</strong>. Cynth
-            never publishes — you review and publish in WordPress.
+            Sends this article to <strong>{connection.name}</strong>{' '}
+            <span className="wp-push__host">({hostOf(connection.baseUrl)})</span> as a WordPress{' '}
+            <strong>draft</strong>. Cynth never publishes — you review and publish in WordPress.
           </p>
 
           {/* THE RELATIONSHIP. When a post already exists, everything about
