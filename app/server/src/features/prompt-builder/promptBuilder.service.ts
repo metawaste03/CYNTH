@@ -184,7 +184,12 @@ function buildProductsSection(products: ArticleProductContext[]): string {
         optionalField('  What it is for', product.useCase),
         optionalField('  Problem it addresses', product.problemSolved),
         optionalField('  Best suited to', product.bestFor),
-        optionalField('  Description', product.description),
+        optionalField('  Summary', product.shortDescription),
+        // Both, and separately. Collapsing them sent the writer only the
+        // short one whenever both existed, which is the normal case.
+        product.description && product.description !== product.shortDescription
+          ? optionalField('  Full description', product.description)
+          : null,
         product.keyFeatures.length ? `  Features: ${product.keyFeatures.join('; ')}` : null,
         optionalField('  Editor\'s note on why this product was chosen', product.editorialNote),
         optionalField('  Editorial notes', product.editorialFit),
@@ -195,7 +200,7 @@ function buildProductsSection(products: ArticleProductContext[]): string {
         product.themeMatchesArticle === false
           ? "  Note: this product is filed under a different thematic area from this article. That is not a reason to exclude it — judge it on whether it fits what you are writing."
           : null,
-        product.useCase || product.description
+        product.useCase || product.shortDescription || product.description
           ? null
           : '  NOT RESEARCHED: nothing is known about this product beyond its title. Place it only if the title alone makes its relevance obvious.',
       ]);

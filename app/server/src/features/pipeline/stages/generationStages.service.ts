@@ -154,6 +154,14 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     ? [
         '=== PRODUCTS AVAILABLE ===',
         'Options, not requirements. Place one only where the surrounding content is genuinely about the problem it solves. Leaving a product out is a correct outcome.',
+        // The long description is usually the manufacturer's own marketing
+        // copy. It is the richest source of specifics available -- capacities,
+        // materials, compatibility -- and also the most likely thing to drag
+        // advertising language into the article if it is echoed rather than
+        // read. Both halves of that are said here, because supplying it
+        // without saying what it is would be the worse outcome.
+        'The description fields are SOURCE MATERIAL, not copy to reuse. "Full description" is usually written by the manufacturer: take the specifics from it — sizes, capacities, materials, what it works with — and state them in your own voice. Never echo its phrasing, its superlatives or its sales framing.',
+        'Where the supplied text makes a claim you cannot check, either attribute it ("the manufacturer says...") or leave it out. Do not restate a marketing claim as a finding of fact.',
         // Everything the editor filled in reaches the writer. The fields below
         // the title are what make a placement contextual rather than
         // decorative — "what it is for" is how a model knows which paragraph
@@ -168,13 +176,24 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
             product.problemSolved ? `  Problem it addresses: ${product.problemSolved}` : '',
             product.bestFor ? `  Best for: ${product.bestFor}` : '',
             product.keyFeatures.length ? `  Features: ${product.keyFeatures.slice(0, 6).join('; ')}` : '',
-            product.description ? `  Description: ${product.description}` : '',
+            // Both descriptions, labelled for what they are. The long one is
+            // usually the manufacturer's own copy and the single richest thing
+            // known about a product — which is exactly why it must be framed
+            // as source material rather than as prose to echo.
+            product.shortDescription ? `  Summary: ${product.shortDescription}` : '',
+            product.description && product.description !== product.shortDescription
+              ? `  Full description: ${product.description}`
+              : '',
             product.editorialFit ? `  Why it fits this publication: ${product.editorialFit}` : '',
             product.editorialNote ? `  Editor's note: ${product.editorialNote}` : '',
             // Stated rather than left to be inferred from an absence. A
             // product Cynth knows nothing about should be placed cautiously
             // or not at all, not placed confidently on a guess.
-            !product.useCase && !product.problemSolved && !product.description && !product.editorialFit
+            !product.useCase &&
+            !product.problemSolved &&
+            !product.shortDescription &&
+            !product.description &&
+            !product.editorialFit
               ? '  (Nothing is recorded about what this product is for. Place it only if the article makes its purpose obvious; otherwise leave it out.)'
               : '',
           ]

@@ -90,6 +90,21 @@ export interface ArticleProductContext {
    */
   vendor: string | null;
   imageUrl: string | null;
+  /**
+   * The two descriptions, kept APART.
+   *
+   * They used to be collapsed into one field as `shortDescription ??
+   * description`, which meant a product with both — the normal case — sent the
+   * writer only the short one and silently dropped the long one. On the four
+   * products of one real article that discarded 3,429 characters, most of what
+   * was actually known about them.
+   *
+   * They are not two versions of the same text. The short one is the editor's
+   * summary line, written for a card; the long one is the detail, and it is
+   * where the specifics live. Every consumer now chooses deliberately rather
+   * than inheriting a coalesce.
+   */
+  shortDescription: string | null;
   description: string | null;
   /** What research established this product is for. Null when it has not been researched. */
   useCase: string | null;
@@ -221,7 +236,8 @@ function productsFor(articleId: number, articleThemeId: number | null): ArticleP
         affiliateUrl: product.affiliateLink,
         vendor: product.vendor,
         imageUrl: uploaded?.url ?? product.sourceImageUrl,
-        description: product.shortDescription ?? product.description,
+        shortDescription: product.shortDescription,
+        description: product.description,
         useCase: product.useCase,
         problemSolved: product.problemSolved,
         bestFor: product.bestFor,

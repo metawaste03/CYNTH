@@ -10,6 +10,9 @@ import { getGateCriteria, saveGateCriteria } from './seoGate.service.js';
 import { getSeoStatusForArticle, SEO_STATUS_META } from './seoStatus.service.js';
 import { validateGateCriteria, validateSeoConfiguration, validateSeoMetadata } from './seo.validation.js';
 import { isGenerationError } from '../generation/generation.errors.js';
+import { getArticleById } from '../articles/articles.repository.js';
+import { coverageByTheme, listCoverage } from '../articles/coverage.service.js';
+import { findInboundLinkOpportunities, toInboundLinkInputs } from './seoLinks.service.js';
 import { SEARCH_INTENTS, SEO_DIMENSIONS, SEO_DIMENSION_LABELS, SEO_DIMENSION_WEIGHTS, SEO_SEVERITIES } from './seo.constants.js';
 
 /**
@@ -283,6 +286,52 @@ seoRouter.patch('/recommendations/:id', (req, res) => {
 });
 
 /* --------------------------------------------------------------- links --- */
+
+/**
+ * WHICH EXISTING ARTICLES SHOULD LINK TO THIS ONE.
+ *
+ * The inverse of the opportunity list stored by an analysis run, and the
+ * question a newly written article actually raises: not "what do I link to"
+ * but "what links to me". A new piece arrives orphaned, and the articles that
+ * should point at it were finished weeks ago.
+ *
+ * A READ. It proposes and stores nothing on its own — the editor decides, and
+ * `?save=1` is what writes the proposals into the same table the analysis run
+ * uses, so both directions are reviewed in one place with one vocabulary.
+ */
+seoRouter.get('/articles/:id/inbound-links', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  const article = getArticleById(id);
+  if (!article) return res.status(404).json({ errors: ['Article not found.'] });
+
+  const candidates = findInboundLinkOpportunities(article);
+
+  if (String(req.query.save) === '1' && candidates.length) {
+    repo.saveInternalLinks(toInboundLinkInputs(null, id, candidates));
+  }
+
+  res.json({
+    articleId: id,
+    title: article.title ?? article.generated?.title ?? null,
+    candidates,
+    // Said explicitly because it is the number an editor acts on: a source
+    // that already contains the anchor is a small edit, one that does not is
+    // a rewrite of a finished article.
+    readyToLink: candidates.filter((c) => c.anchorFoundInSource).length,
+    saved: String(req.query.save) === '1',
+  });
+});
+
+/** What this publication has already written. The data behind coverage awareness. */
+seoRouter.get('/coverage', (req, res) => {
+  const themeId = req.query.themeId !== undefined ? parseId(String(req.query.themeId)) : null;
+  res.json({
+    byTheme: coverageByTheme(),
+    articles: listCoverage().filter((entry) => themeId === null || entry.themeId === themeId),
+  });
+});
 
 seoRouter.patch('/internal-links/:id', (req, res) => {
   const id = parseId(req.params.id);

@@ -6,6 +6,7 @@ import type { TopicMode } from '../pipeline.constants.js';
 import { isSpendRefusal } from '../../generation/generation.errors.js';
 import { getThemeById, getProjectById } from '../../content/content.repository.js';
 import { getArticleById } from '../../articles/articles.repository.js';
+import { buildCoverageBlock } from '../../articles/coverage.service.js';
 
 /**
  * THE RESEARCH STAGES — topic research, keyword/title research, and article
@@ -77,7 +78,12 @@ function strList(source: Record<string, unknown>, key: string, max = 25): string
 }
 
 /** The editorial context every research stage is given. Read from configuration, never invented. */
-function themeContext(pipelineId: number): { themeName: string; themeGuidance: string; projectRules: string } {
+function themeContext(pipelineId: number): {
+  themeName: string;
+  themeGuidance: string;
+  projectRules: string;
+  coverage: string;
+} {
   const pipeline = getPipelineById(pipelineId);
   const theme = pipeline?.themeId ? getThemeById(pipeline.themeId) : null;
   const article = pipeline ? getArticleById(pipeline.articleId) : null;
@@ -87,6 +93,13 @@ function themeContext(pipelineId: number): { themeName: string; themeGuidance: s
     themeName: theme?.name ?? '',
     themeGuidance: theme?.description ?? '',
     projectRules: project?.editorialGuidance ?? '',
+    // WHAT THE PUBLICATION HAS ALREADY WRITTEN. Until this was added, the
+    // research stage could not see a single existing article, so "existing
+    // coverage" in its output only ever meant the wider web. It could propose
+    // a subject already covered, and it could not deliberately fill a gap in
+    // its own catalogue. The current article is excluded — an article cannot
+    // be its own prior coverage.
+    coverage: buildCoverageBlock(pipeline?.themeId ?? null, pipeline?.articleId),
   };
 }
 
@@ -124,7 +137,7 @@ export interface TopicResearchSet extends TopicResearch {
 }
 
 function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, topicMode: TopicMode): string {
-  const { themeName, themeGuidance, projectRules } = themeContext(pipelineId);
+  const { themeName, themeGuidance, projectRules, coverage } = themeContext(pipelineId);
 
   return [
     'You are a senior editorial researcher for a consumer publication. Your job is to decide whether a topic is genuinely worth producing, and to find the strongest angle if it is.',
@@ -139,6 +152,10 @@ function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, 
     themeGuidance ? `Area guidance: ${themeGuidance}` : '',
     projectRules ? `Publication editorial rules: ${projectRules}` : '',
     '',
+    // Placed BEFORE the brief so the catalogue is known before a subject is
+    // considered, rather than read as an afterthought to a decision already made.
+    coverage,
+
     '=== BRIEF ===',
     // EXACT is a different job from EXPLORE, not a stricter version of it.
     // Exploring asks "what should we write here?"; exact asks "this is what we
