@@ -75,6 +75,20 @@ function enclosed(value: string | null | undefined): string {
  * that is not a web URL is dropped rather than emitted, so nothing can put a
  * `javascript:` target into a published post. The site's renderer checks this
  * again — neither side trusts the other, because they ship separately.
+ *
+ * NOTE ON PRODUCT IMAGES (2026-09-18). `product.imageUrl` is ROOT-RELATIVE —
+ * `/uploads/products/<uuid>.png`, served by Cynth's own app. `new URL()`
+ * throws on it, so every card Cynth has ever pushed silently carried no
+ * `image=` attribute, and no product card on EveryFiveDays showed a picture.
+ *
+ * Dropping it is still the right behaviour, and the fix is NOT to make this
+ * absolute: `http://localhost:4100/uploads/...` is unreachable from the live
+ * site, and a path resolved against the CMS host points at nothing. The site
+ * owns product images in its own registry, where the entry's image WINS over
+ * whatever a placement supplies — see `EFD_Site::shortcode_product`. Images
+ * get there with `scripts/import-product-images.php` in the EveryFiveDays
+ * repo, which copies Cynth's primary image for each product into the
+ * WordPress media library and points the registry entry at it.
  */
 function safeUrl(url: string | null): string | null {
   if (!url) return null;
@@ -112,7 +126,10 @@ export function renderProductCard(product: ArticleProductContext): string {
 
   // What the product is FOR, which is the one line a reader actually needs at
   // the point the author reached for it.
-  const blurb = product.useCase ?? product.description;
+  // A card wants the SHORT text. The long description is for the writer, not
+  // for a card that sits beside a paragraph — falling back to it would drop a
+  // wall of manufacturer copy into the middle of the article.
+  const blurb = product.useCase ?? product.shortDescription ?? product.description;
 
   const parts: string[] = [`id="${product.productId}"`];
 
