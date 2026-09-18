@@ -24,11 +24,22 @@ function unlinkImageFile(relativePath: string): void {
 }
 
 productsRouter.get('/', (req, res) => {
-  const { search, category, status } = req.query;
+  const { search, category, status, themeId } = req.query;
+
+  // themeId=none lists the products with no thematic area chosen, which is a
+  // different question from "any theme" and needs its own value.
+  let theme: number | 'none' | undefined;
+  if (themeId === 'none') theme = 'none';
+  else if (typeof themeId === 'string' && themeId) {
+    const parsed = Number(themeId);
+    if (Number.isInteger(parsed) && parsed > 0) theme = parsed;
+  }
+
   const products = repo.listProducts({
     search: typeof search === 'string' ? search : undefined,
     category: typeof category === 'string' ? category : undefined,
     status: status === 'active' || status === 'inactive' ? status : undefined,
+    themeId: theme,
   });
   res.json({ products });
 });
@@ -64,6 +75,36 @@ productsRouter.put('/:id', (req, res) => {
 
   const product = repo.updateProduct(id, value!);
   if (!product) return res.status(404).json({ errors: ['Product not found.'] });
+
+  res.json({ product });
+});
+
+/**
+ * Sets or clears a product's thematic area.
+ *
+ * Its own endpoint, mirroring how an author's areas are assigned: it is a
+ * relationship, and clearing it must not require resubmitting the product.
+ * `themeId: null` removes the association.
+ */
+productsRouter.patch('/:id/theme', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid product id.'] });
+
+  const raw = req.body?.themeId;
+  let themeId: number | null;
+  if (raw === null || raw === '') {
+    themeId = null;
+  } else {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      return res.status(400).json({ errors: ['themeId must be a positive whole number, or null to remove the area.'] });
+    }
+    themeId = parsed;
+  }
+
+  const product = repo.setProductTheme(id, themeId);
+  if (product === null) return res.status(404).json({ errors: ['Product not found.'] });
+  if ('error' in product) return res.status(400).json({ errors: [product.error] });
 
   res.json({ product });
 });

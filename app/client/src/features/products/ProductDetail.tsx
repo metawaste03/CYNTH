@@ -191,6 +191,7 @@ export function ProductDetail() {
       <section className="product-detail__section">
         <h2>General</h2>
         <dl>
+          <Field label="Thematic Area" value={product.themeName} />
           <Field label="Short Description" value={product.shortDescription} />
           <Field label="Full Description" value={product.description} />
         </dl>

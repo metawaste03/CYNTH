@@ -25,10 +25,11 @@ The Article Engine, once implemented, is expected to:
 The drafting workflow as built:
 
 1. The eight-step New Article wizard collects the article type, author, topic, working title, keywords, optional product, and content brief, saving to the database at every step (Milestones 5B and 6).
-2. The Prompt Builder assembles one complete prompt from that saved draft — article details, the author's full voice profile and writing samples, the product's editorial notes where applicable, the content brief, and a fixed instruction block (Milestone 7). It is the single source of truth for the prompt; nothing else assembles one.
+2. The Prompt Builder assembles one complete prompt from that saved draft — article details, the author's full voice profile and writing samples, the author's skill document and any shared editorial guidance where present (Milestone 16), the product's editorial notes where applicable, the content brief, and a fixed instruction block (Milestone 7). It is the single source of truth for the prompt; nothing else assembles one. Sections whose configuration is absent are omitted rather than filled in, so an author with no skill document produces a prompt identical to the one they would have produced before skills existed.
 3. The Model Router resolves which configured provider and model handle Article Generation (Milestone 8).
 4. The generation engine sends the prompt through that provider's adapter and normalizes the response (Milestone 9).
 5. The generated title and body are saved against the draft — never overwriting the editor's working title — and every attempt is recorded in generation history.
+6. Where the author placed a product, that placement is read back out of the generated draft and recorded, including the products they judged did not belong (Milestone 17). Cynth renders the product card from its own records at push time; the model writes only the marker saying where one goes, never the link, the image or the price.
 
 Article type conventions live in the seeded `article_types` table rather than `data/article_types/`, which remains empty; that directory was superseded once a database existed. `prompts/article_generation/` likewise remains empty: the prompt is assembled in code by the Prompt Builder from database records, not loaded from prompt files.
 

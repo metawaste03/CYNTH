@@ -25,7 +25,11 @@ export type GenerationErrorCode =
   | 'network_error'
   | 'empty_response'
   // Cynth's own guard against a duplicate request.
-  | 'generation_in_progress';
+  | 'generation_in_progress'
+  // Cost safety. Neither is a provider failure — both mean Cynth deliberately
+  // declined to spend money, and neither ever triggers a model substitution.
+  | 'paid_generation_blocked'
+  | 'cost_confirmation_required';
 
 const HTTP_STATUS_BY_CODE: Record<GenerationErrorCode, number> = {
   provider_not_configured: 409,
@@ -34,6 +38,8 @@ const HTTP_STATUS_BY_CODE: Record<GenerationErrorCode, number> = {
   unsupported_provider: 409,
   invalid_configuration: 409,
   generation_in_progress: 409,
+  paid_generation_blocked: 409,
+  cost_confirmation_required: 402,
   authentication_failed: 502,
   model_not_found: 502,
   rate_limited: 429,
@@ -58,22 +64,60 @@ const RETRYABLE_CODES: ReadonlySet<GenerationErrorCode> = new Set<GenerationErro
   'generation_in_progress',
 ]);
 
+/**
+ * What a spend refusal needs to say beyond "this costs money".
+ *
+ * Asking someone to "confirm the estimated cost" without telling them the
+ * estimate is not a question they can answer. This carries the figure so the
+ * UI can put it in front of them.
+ */
+export interface SpendRefusalDetail {
+  stage: string;
+  stageLabel: string;
+  model: string;
+  costClass: string;
+  /** The up-front estimate in USD. Null when the model's pricing is unknown — which is why it is being gated. */
+  estimatedCost: number | null;
+}
+
 export class GenerationError extends Error {
   readonly code: GenerationErrorCode;
   readonly httpStatus: number;
   readonly retryable: boolean;
+  /** Present on cost refusals. Never carries a credential — see redactSecrets. */
+  readonly spend: SpendRefusalDetail | null;
 
-  constructor(code: GenerationErrorCode, message: string) {
+  constructor(code: GenerationErrorCode, message: string, spend: SpendRefusalDetail | null = null) {
     super(message);
     this.name = 'GenerationError';
     this.code = code;
     this.httpStatus = HTTP_STATUS_BY_CODE[code];
     this.retryable = RETRYABLE_CODES.has(code);
+    this.spend = spend;
   }
 }
 
 export function isGenerationError(value: unknown): value is GenerationError {
   return value instanceof GenerationError;
+}
+
+/**
+ * Whether an error is Cynth declining to spend, rather than something going
+ * wrong.
+ *
+ * The distinction matters because these two are handled completely
+ * differently. A stage that FAILED is a broken run: it moves the pipeline to a
+ * terminal state and needs a person to decide what happens next. A stage that
+ * was never allowed to spend has not run at all — nothing was called, nothing
+ * was charged, and the pipeline is exactly where it was. Treating the second
+ * as the first ends the run because the user was asked a question and had not
+ * yet answered it.
+ */
+export function isSpendRefusal(value: unknown): boolean {
+  return (
+    isGenerationError(value) &&
+    (value.code === 'cost_confirmation_required' || value.code === 'paid_generation_blocked')
+  );
 }
 
 /**

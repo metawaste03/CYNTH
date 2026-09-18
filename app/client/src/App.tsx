@@ -7,6 +7,7 @@ import { PromptPreview } from './features/new-article/PromptPreview';
 import { AuthorsList } from './features/authors/AuthorsList';
 import { AuthorDetail } from './features/authors/AuthorDetail';
 import { NewAuthor } from './features/authors/NewAuthor';
+import { AuthorSkillsPage } from './features/author-skills/AuthorSkillsPage';
 import { EditAuthor } from './features/authors/EditAuthor';
 import { ProductsList } from './features/products/ProductsList';
 import { ProductDetail } from './features/products/ProductDetail';
@@ -15,10 +16,20 @@ import { EditProduct } from './features/products/EditProduct';
 import { SeoReview } from './features/seo-review/SeoReview';
 import { QualityGate } from './features/quality-gate/QualityGate';
 import { Settings } from './features/settings/Settings';
+import { ThemesPage } from './features/content/ThemesPage';
+import { ThemeDetail } from './features/content/ThemeDetail';
+import { DraftsPage } from './features/articles/DraftsPage';
+import { ArticleView } from './features/articles/ArticleView';
 import { AIProvidersList } from './features/ai-providers/AIProvidersList';
 import { AIProviderDetail } from './features/ai-providers/AIProviderDetail';
 import { NewAIProvider } from './features/ai-providers/NewAIProvider';
 import { EditAIProvider } from './features/ai-providers/EditAIProvider';
+import { WordPressSettings } from './features/wordpress/WordPressSettings';
+import { AmazonSettings } from './features/amazon/AmazonSettings';
+import { MediaLibrary } from './features/media/MediaLibrary';
+import { GenerateArticle } from './features/pipeline/GenerateArticle';
+import { EditorialSettings } from './features/settings/EditorialSettings';
+import { ModelRoles } from './features/pipeline/ModelRoles';
 
 function App() {
   return (
@@ -42,6 +53,15 @@ function App() {
           <Route path=":id" element={<ProductDetail />} />
           <Route path=":id/edit" element={<EditProduct />} />
         </Route>
+        <Route path="author-skills" element={<AuthorSkillsPage />} />
+        <Route path="media" element={<MediaLibrary />} />
+        <Route path="generate" element={<GenerateArticle />} />
+        {/* A guided run is resumable: the id in the URL is the run. */}
+        <Route path="generate/:pipelineId" element={<GenerateArticle />} />
+        <Route path="content/themes" element={<ThemesPage />} />
+        <Route path="content/themes/:id" element={<ThemeDetail />} />
+        <Route path="drafts" element={<DraftsPage />} />
+        <Route path="articles/:id" element={<ArticleView />} />
         <Route path="seo-review" element={<SeoReview />} />
         <Route path="quality-gate" element={<QualityGate />} />
         <Route path="settings">
@@ -52,6 +72,10 @@ function App() {
             <Route path=":id" element={<AIProviderDetail />} />
             <Route path=":id/edit" element={<EditAIProvider />} />
           </Route>
+          <Route path="wordpress" element={<WordPressSettings />} />
+          <Route path="amazon" element={<AmazonSettings />} />
+          <Route path="models" element={<ModelRoles />} />
+          <Route path="editorial" element={<EditorialSettings />} />
         </Route>
         <Route path="*" element={<NotFound />} />
       </Route>

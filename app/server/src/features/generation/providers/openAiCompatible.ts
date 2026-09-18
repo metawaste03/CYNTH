@@ -41,12 +41,16 @@ export async function callChatCompletions(
     {
       model: request.model,
       messages: [{ role: 'user', content: request.prompt }],
+      // Sent ONLY when the caller set a cap — that is, for a model test.
+      // Generation still sends no limit, which is what keeps the max_tokens
+      // vs. max_completion_tokens split off the article path entirely.
+      ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
     },
     request.timeoutMs,
   );
 
   if (!response.ok) throwForFailedResponse(response, context.apiKey);
-  if (!response.json) throwForUnparsableBody();
+  if (!response.json) throwForUnparsableBody(response);
 
   const choices = response.json.choices;
   const choice: ChatChoice | undefined = Array.isArray(choices) ? (choices[0] as ChatChoice) : undefined;

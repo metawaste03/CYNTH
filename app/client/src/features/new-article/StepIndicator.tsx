@@ -1,6 +1,6 @@
 export const STEP_LABELS = [
   'Article Type',
-  'Author',
+  'Theme & Author',
   'Topic',
   'Title',
   'Keywords',

@@ -14,7 +14,25 @@
   flex-direction: column;
 }
 
+/*
+  The top bar exists at every width, but carries different things.
+
+  On desktop it holds only the backend status indicator: the sidebar already
+  provides navigation and the app title, so a full bar would be chrome for its
+  own sake. Below the breakpoint it additionally carries the drawer toggle and
+  the app title, which the collapsed sidebar no longer shows.
+*/
 .app-shell__topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-5) 0;
+  background: transparent;
+}
+
+.app-shell__menu-button,
+.app-shell__topbar-title {
   display: none;
 }
 
@@ -28,10 +46,8 @@
 
 @media (max-width: 880px) {
   .app-shell__topbar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
     height: var(--topbar-height);
+    min-height: var(--topbar-height);
     padding: 0 var(--space-4);
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
@@ -58,6 +74,7 @@
   }
 
   .app-shell__topbar-title {
+    display: inline;
     font-weight: 600;
     font-size: 15px;
   }

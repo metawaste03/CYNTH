@@ -5,6 +5,8 @@ export interface ProductListFilters {
   search?: string;
   category?: string;
   status?: 'active' | 'inactive';
+  /** A theme id as a string, or 'none' for products with no thematic area. */
+  themeId?: string;
 }
 
 function buildQuery(filters: ProductListFilters): string {
@@ -12,6 +14,7 @@ function buildQuery(filters: ProductListFilters): string {
   if (filters.search) params.set('search', filters.search);
   if (filters.category) params.set('category', filters.category);
   if (filters.status) params.set('status', filters.status);
+  if (filters.themeId) params.set('themeId', filters.themeId);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
