@@ -1,6 +1,6 @@
 # Cynth — Application
 
-The Cynth editorial engine: a local-first, single-user tool for drafting articles for EveryFiveDays with a human editor as the final authority. Current state reflects Milestones 0–13 — see [../docs/13_MILESTONES.md](../docs/13_MILESTONES.md) and [../docs/CHANGELOG.md](../docs/CHANGELOG.md).
+The Cynth editorial engine: a local-first, single-user tool for drafting articles for EveryFiveDays with a human editor as the final authority. Current state reflects Milestones 0–43 (changelog 0.54.0, 2026-10-03) — see [../docs/13_MILESTONES.md](../docs/13_MILESTONES.md) and [../docs/CHANGELOG.md](../docs/CHANGELOG.md).
 
 ## Structure
 
@@ -20,7 +20,7 @@ Both are feature-based (`features/` + `shared/`).
 
 **Frontend** — Dashboard with live counts, Authors and Products management, an eight-step New Article wizard (Article Type → Author → Topic → Title → Keywords → Product → Content Brief → Editorial Review) with draft persistence at every step, a prompt preview page, a Generate Article panel with a model picker showing each model's price, a Discover Models browser over the provider's live catalogue, WordPress connection settings, a push-to-WordPress panel on the article view, and a backend health indicator in the app shell.
 
-**Not built yet** — SEO Review and Quality Gate exist as navigation entries with placeholder pages only. There is no article editor, no web-intelligence crawler, no backlink engine, no Novamira integration, no affiliate-link placement, and no authentication (single-user by design). **Nothing in the application can publish**: a generated article stays a draft until a human approves it, and the CMS connector contract has no publish operation at all — Cynth creates WordPress drafts, and a human publishes them in WordPress.
+**Since Milestone 13** — the SEO engine (analysis, meta description, slug, SEO title and focus keyword, pushed to Rank Math), the Quality Gate, web intelligence for research, product research and vendor detection, featured-image generation, internal-link suggestions, a staged generation pipeline, and the EveryFiveDays product-registry export all exist; the per-milestone record is in `docs/13_MILESTONES.md`. There is still no authentication (single-user by design). **Nothing in the application can publish**: the CMS connector contract has no publish operation at all — Cynth creates WordPress drafts, and a human publishes them in WordPress. The one write to an already-published post is the confirmed live update, which replaces the body, leaves the post published, and refuses if the post was edited in WordPress since the last push.
 
 ## Running Cynth
 
