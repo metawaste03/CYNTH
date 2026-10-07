@@ -22,6 +22,11 @@ const SCRATCH = path.join(os.tmpdir(), `cynth-wp-test-${process.pid}`);
 fs.rmSync(SCRATCH, { recursive: true, force: true });
 fs.mkdirSync(SCRATCH, { recursive: true });
 process.env.CYNTH_DB_DIR = SCRATCH;
+// Without this, every connection these tests create wrote its credential into
+// the developer's real app/server/.env.local under CYNTH_CMS_<id>_CREDENTIAL —
+// and the scratch database's ids overlap the real ones, so a test could
+// overwrite (or delete) a real site's password.
+process.env.CYNTH_SECRETS_FILE = path.join(SCRATCH, '.env.local');
 
 const dbModule = await import('../src/shared/database/index.js');
 const articlesRepo = await import('../src/features/articles/articles.repository.js');
@@ -268,6 +273,10 @@ const mock = http.createServer((req, res) => {
       if (body.slug !== undefined) existing.slug = String(body.slug);
       if (body.excerpt !== undefined) existing.excerpt = String(body.excerpt);
       if (body.featured_media !== undefined) existing.featuredMedia = Number(body.featured_media);
+      // As WordPress does: a status in the body IS the post's status from now
+      // on. The mock used to ignore it, which is how a live update that
+      // unpublished the post passed every test.
+      if (body.status !== undefined) existing.status = String(body.status);
       return send(res, 200, serializePost(existing));
     }
 
@@ -1240,6 +1249,26 @@ test('LIVE UPDATE: the history records it as its own operation', () => {
   );
 });
 
+test('LIVE UPDATE: an article with a featured image is still published afterwards', async () => {
+  // The regression: the body update kept the post live, then attaching the
+  // image sent `status: draft` and took it down (posts 365, 394, 338).
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('Live With Image', 'live.png', 'A live picture');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  const postId = Number(created.post.id);
+  state.posts.get(postId)!.status = 'publish';
+  const writesBefore = state.writes.length;
+
+  const result = await publish.pushArticle(article.id, connection.id, 'update_published', { confirmed: true });
+
+  assert.equal(state.posts.get(postId)!.status, 'publish', 'the article must still be live');
+  assert.equal(result.post.status, 'publish', 'and Cynth must record it as live');
+  assert.ok(state.posts.get(postId)!.featuredMedia, 'the image was still attached');
+  for (const write of state.writes.slice(writesBefore)) {
+    assert.equal(write.status, undefined, 'no write in a live update may carry a status');
+  }
+});
+
 /* ================= connector-level draft-only guarantee ================= */
 
 test('SAFETY: the connector contract has no way to publish', () => {
@@ -1279,4 +1308,95 @@ test('SECRETS: the secret store keeps values out of the database entirely', () =
   const row = db().prepare('SELECT * FROM cms_connections WHERE id = ?').get(connection.id) as Record<string, unknown>;
   assert.equal(row.credential_env_var, envVar);
   assert.ok(!JSON.stringify(row).includes(TEST_APP_PASSWORD));
+});
+
+/* ======================== status sync from the CMS ====================== */
+
+test('SYNC: a post published in WordPress stops showing as a draft in Cynth', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Published Behind Cynth’s Back');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  assert.equal(links.getLink(article.id, connection.id)!.externalStatus, 'draft');
+
+  // A human presses Publish in WordPress. Cynth is not told.
+  state.posts.get(Number(created.post.id))!.status = 'publish';
+  const writesBefore = state.writes.length;
+
+  const result = await publish.syncLinksFromCms();
+
+  assert.equal(links.getLink(article.id, connection.id)!.externalStatus, 'publish');
+  assert.ok(result.changed.some((c) => c.articleId === article.id && c.to === 'publish'));
+  assert.ok(result.markedPublished.includes(article.id), 'the default site publishing it marks the article published');
+  assert.equal(articlesRepo.getArticleById(article.id)!.status, 'published');
+  assert.equal(state.writes.length, writesBefore, 'a sync writes nothing to the site');
+});
+
+test('SYNC: a post deleted in WordPress is recorded as gone, not left as a draft', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Deleted Behind Cynth’s Back');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  state.posts.delete(Number(created.post.id));
+
+  await publish.syncLinksFromCms();
+
+  assert.equal(links.getLink(article.id, connection.id)!.externalStatus, 'deleted');
+  assert.equal(articlesRepo.getArticleById(article.id)!.status, 'draft', 'a vanished post never promotes the article');
+});
+
+/* ============== credentials never follow a changed destination ========== */
+
+test('CREDENTIALS: changing the site address clears the stored credential', () => {
+  const moved = connections.createConnection({
+    name: 'Moves Away',
+    connectorType: 'wordpress',
+    description: null,
+    baseUrl: MOCK_BASE,
+    seoTarget: null,
+    authMethod: 'application_password',
+    username: TEST_USERNAME,
+    credential: TEST_APP_PASSWORD,
+  });
+  assert.equal(moved.hasCredential, true);
+
+  // An edit to the name only keeps it.
+  const renamed = connections.updateConnection(moved.id, {
+    name: 'Renamed',
+    connectorType: 'wordpress',
+    description: null,
+    baseUrl: MOCK_BASE,
+    seoTarget: null,
+    authMethod: 'application_password',
+    username: TEST_USERNAME,
+    credential: undefined,
+  })!;
+  assert.equal(renamed.hasCredential, true, 'same site: the credential stays');
+
+  // Pointing it anywhere else does not take the password along.
+  const pointed = connections.updateConnection(moved.id, {
+    name: 'Renamed',
+    connectorType: 'wordpress',
+    description: null,
+    baseUrl: 'https://attacker.example',
+    seoTarget: null,
+    authMethod: 'application_password',
+    username: TEST_USERNAME,
+    credential: undefined,
+  })!;
+  assert.equal(pointed.hasCredential, false, 'a new site needs the credential entered again');
+  assert.equal(connections.getConnectionSecret(moved.id), null);
+
+  connections.deleteConnection(moved.id);
+});
+
+test('CREDENTIALS: a credential with a line break is refused', async () => {
+  const { validateCmsConnectionInput } = await import('../src/features/cms/cmsConnections.validation.js');
+  const result = validateCmsConnectionInput({
+    name: 'Injected',
+    connectorType: 'wordpress',
+    baseUrl: MOCK_BASE,
+    username: TEST_USERNAME,
+    credential: 'pass\nNODE_OPTIONS=--require=/tmp/evil.js',
+  });
+  assert.ok(result.errors.some((e) => /line break/.test(e)));
+  assert.throws(() => secrets.setSecret('CYNTH_TEST_INJECT', 'a\nB=c'), /control characters/);
 });

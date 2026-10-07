@@ -6,6 +6,7 @@ import { fetchArticles } from './api';
 import { ArticleList } from './ArticleList';
 import type { ArticleRunHint } from './ArticleList';
 import { fetchResumableRuns } from '../pipeline/api';
+import { syncFromCms } from '../wordpress/api';
 
 type StatusFilter = 'draft' | 'published' | 'all';
 
@@ -33,6 +34,8 @@ export function DraftsPage() {
   const [runs, setRuns] = useState<Map<number, ArticleRunHint>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   function load() {
     setIsLoading(true);
@@ -72,6 +75,32 @@ export function DraftsPage() {
 
   useEffect(load, [filter]);
 
+  /**
+   * Publishing happens in WordPress, so Cynth only learns of it by asking.
+   * The server also does this every 15 minutes; this is for "I just hit
+   * Publish and want to see it now".
+   */
+  function sync() {
+    setIsSyncing(true);
+    setSyncMessage(null);
+    syncFromCms()
+      .then((result) => {
+        const parts = [`Checked ${result.checked} post${result.checked === 1 ? '' : 's'}`];
+        parts.push(
+          result.markedPublished.length
+            ? `${result.markedPublished.length} now marked published`
+            : 'no new publications',
+        );
+        if (result.failures.length) {
+          parts.push(`could not reach ${result.failures.map((f) => f.connectionName).join(', ')}`);
+        }
+        setSyncMessage(`${parts.join(' · ')}.`);
+        load();
+      })
+      .catch((err) => setSyncMessage(err instanceof ApiError ? err.errors.join(' ') : 'Sync failed.'))
+      .finally(() => setIsSyncing(false));
+  }
+
   return (
     <div className="page">
       <PageHeader
@@ -90,7 +119,16 @@ export function DraftsPage() {
             {option.label}
           </button>
         ))}
+        <button type="button" className="button" onClick={sync} disabled={isSyncing}>
+          {isSyncing ? 'Syncing…' : 'Sync from WordPress'}
+        </button>
       </div>
+
+      {syncMessage && (
+        <p className="page__count" role="status">
+          {syncMessage}
+        </p>
+      )}
 
       {error && (
         <p className="form-error" role="alert">

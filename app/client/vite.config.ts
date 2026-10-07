@@ -55,7 +55,9 @@ function resolveProxyTarget(): string {
   if (explicitUrl) return explicitUrl.replace(/\/+$/, '')
 
   const port = process.env.CYNTH_SERVER_PORT ?? shared.CYNTH_SERVER_PORT ?? String(DEFAULT_SERVER_PORT)
-  return `http://localhost:${port}`
+  // 127.0.0.1 rather than localhost: the server binds to IPv4 loopback only,
+  // and "localhost" can resolve to ::1 first.
+  return `http://127.0.0.1:${port}`
 }
 
 const proxyTarget = resolveProxyTarget()

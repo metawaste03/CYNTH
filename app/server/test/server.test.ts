@@ -16,6 +16,7 @@ import path from 'node:path';
 import os from 'node:os';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
+import http from 'node:http';
 import type { Server } from 'node:http';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-server-test-${process.pid}`);
@@ -36,6 +37,8 @@ process.env.CYNTH_SERVE_CLIENT = 'true';
 const dbModule = await import('../src/shared/database/index.js');
 const { serveBuiltClient, shouldServeClient, CLIENT_DIST_DIR } = await import('../src/shared/static/clientStatic.js');
 const { notFound } = await import('../src/shared/middleware/notFound.js');
+const { requestGuard } = await import('../src/shared/middleware/requestGuard.js');
+const { env, DEFAULT_SERVER_HOST } = await import('../src/shared/config/env.js');
 
 dbModule.initializeDatabase();
 
@@ -48,7 +51,9 @@ dbModule.initializeDatabase();
  */
 function buildApp(): express.Express {
   const app = express();
+  app.use(requestGuard);
   app.use(express.json());
+  app.post('/api/articles', (_req, res) => res.status(201).json({ created: true }));
 
   const startedAt = new Date();
   let staticResult: { serving: boolean } = { serving: false };
@@ -216,4 +221,62 @@ test('MODE: a missing build is reported clearly rather than crashing the server'
 
 test('MODE: the client directory resolves next to the server build', () => {
   assert.equal(CLIENT_DIST_DIR, FAKE_CLIENT_DIST, 'CYNTH_CLIENT_DIST is honoured when set');
+});
+
+/* ========================= who may call the API ========================= */
+
+/**
+ * A raw request, because fetch() will not let a caller set Host — and Host is
+ * exactly what a DNS-rebinding page controls.
+ */
+function rawRequest(
+  method: string,
+  pathname: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; body: string }> {
+  const { port } = new URL(baseUrl);
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: Number(port), method, path: pathname, headers }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on('error', reject);
+    req.end(method === 'POST' ? '{}' : undefined);
+  });
+}
+
+test('NETWORK: the server binds to loopback unless told otherwise', () => {
+  assert.equal(DEFAULT_SERVER_HOST, '127.0.0.1');
+  if (!process.env.CYNTH_SERVER_HOST) assert.equal(env.host, '127.0.0.1');
+});
+
+test('GUARD: a request addressed to another hostname is refused (DNS rebinding)', async () => {
+  const res = await rawRequest('GET', '/api/health', { host: 'attacker.example:4100' });
+  assert.equal(res.status, 403);
+});
+
+test('GUARD: localhost and 127.0.0.1 are answered', async () => {
+  for (const host of ['localhost:4100', '127.0.0.1:4100', '[::1]:4100']) {
+    const res = await rawRequest('GET', '/api/health', { host });
+    assert.equal(res.status, 200, `${host} is this machine`);
+  }
+});
+
+test('GUARD: a write sent by another website is refused (CSRF)', async () => {
+  const res = await rawRequest('POST', '/api/articles', {
+    host: 'localhost:4100',
+    origin: 'https://attacker.example',
+    'content-type': 'text/plain',
+  });
+  assert.equal(res.status, 403);
+});
+
+test('GUARD: writes from Cynth itself, the Vite dev server, and scripts still work', async () => {
+  for (const origin of ['http://localhost:4100', 'http://localhost:5173', undefined]) {
+    const headers: Record<string, string> = { host: 'localhost:4100', 'content-type': 'application/json' };
+    if (origin) headers.origin = origin;
+    const res = await rawRequest('POST', '/api/articles', headers);
+    assert.equal(res.status, 201, `origin ${origin ?? '(none)'} is allowed`);
+  }
 });

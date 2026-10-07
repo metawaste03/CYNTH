@@ -422,52 +422,27 @@ async function attachFeaturedImage(
   post: CmsRemotePost,
   payload: CmsDraftPayload,
   context: CmsCallContext,
+  options: { keepRemoteState?: boolean } = {},
 ): Promise<CmsRemotePost> {
   const image = payload.featuredImage;
   if (!image) return post;
 
   try {
-    const bytes = await readFile(image.filePath);
-
-    const upload = await fetch(`${apiRoot(context.baseUrl)}/wp/v2/media`, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        authorization: authHeader(context),
-        'content-type': image.mimeType,
-        // WordPress reads the filename from this header for a raw-body
-        // upload, which avoids assembling a multipart request by hand.
-        'content-disposition': `attachment; filename="${sanitizeUploadFilename(image.filename)}"`,
-      },
-      body: new Uint8Array(bytes),
-      signal: AbortSignal.timeout(MEDIA_UPLOAD_TIMEOUT_MS),
-    });
-
-    if (!upload.ok) return post;
-
-    const media = (await upload.json().catch(() => null)) as Record<string, unknown> | null;
-    const mediaId = media && typeof media.id === 'number' ? media.id : null;
+    const mediaId = await uploadMedia(image, context);
     if (mediaId === null) return post;
-
-    // Alt text is a separate write and only happens when the editor actually
-    // wrote some — an empty alt attribute is better than an invented one.
-    if (image.altText) {
-      await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/media/${mediaId}`, {
-        method: 'POST',
-        headers: { authorization: authHeader(context) },
-        body: { alt_text: image.altText },
-      });
-    }
 
     const attach = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(post.id)}`, {
       method: 'POST',
       headers: { authorization: authHeader(context) },
-      // `status` is restated even though WordPress would leave it untouched
-      // on a partial update. Every write this connector makes to a post says
-      // "draft" — that is the invariant the whole module is built around, and
-      // an exception to it would be the first place a future edit could
-      // accidentally publish something.
-      body: { featured_media: mediaId, status: DRAFT_STATUS },
+      // On a draft, `status` is restated even though WordPress would leave it
+      // untouched on a partial update: every draft write says "draft".
+      //
+      // On a LIVE post it must not be sent at all. It used to be, which made
+      // "Update the live article" unpublish every article with a featured
+      // image — the body update kept the post live and this second request
+      // then took it down, while the caller was told readers saw the new
+      // version (posts 365, 394 and 338, 2026-10-01).
+      body: options.keepRemoteState ? { featured_media: mediaId } : { featured_media: mediaId, status: DRAFT_STATUS },
     });
 
     return attach.ok ? mapPost(attach.json, context.baseUrl) : post;
@@ -631,7 +606,7 @@ export const wordpressConnector: CmsConnector = {
     if (!response.ok) throwForFailure(response, context, 'edit this post');
     const post = mapPost(response.json, context.baseUrl);
 
-    return attachFeaturedImage(post, payload, context);
+    return attachFeaturedImage(post, payload, context, { keepRemoteState: true });
   },
 
   /** Reads a post's current state. Null — not an error — when WordPress no longer has it. */

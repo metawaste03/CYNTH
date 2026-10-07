@@ -36,8 +36,36 @@ function resolvePort(): number {
   return configured === undefined ? DEFAULT_SERVER_PORT : parsed;
 }
 
+/**
+ * The interface the server binds to. Loopback only, by default.
+ *
+ * Cynth has no login: anything that can reach the port can read every draft,
+ * push to the live site and spend provider credit. Binding with no host meant
+ * every interface, so on a Wi-Fi network classed as Public — with Windows
+ * allowing node.exe through — anyone nearby could do all of that.
+ *
+ * CYNTH_SERVER_HOST exists for a deliberate exception, not a convenience.
+ * Exposing Cynth beyond this machine also needs the hostnames it will be
+ * reached by listed in CYNTH_ALLOWED_HOSTS, or the request guard refuses them.
+ */
+export const DEFAULT_SERVER_HOST = '127.0.0.1';
+
+/** Hostnames (no port) the request guard accepts in addition to loopback. */
+function resolveAllowedHosts(): string[] {
+  return (process.env.CYNTH_ALLOWED_HOSTS ?? '')
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export const env = {
   get port(): number {
     return resolvePort();
+  },
+  get host(): string {
+    return process.env.CYNTH_SERVER_HOST?.trim() || DEFAULT_SERVER_HOST;
+  },
+  get allowedHosts(): string[] {
+    return resolveAllowedHosts();
   },
 };

@@ -1,4 +1,5 @@
 import { getConnector } from './connectors/index.js';
+import { hasUnsafeSecretCharacters } from '../../shared/secrets/secretStore.js';
 
 export interface CmsConnectionInput {
   name: string;
@@ -102,6 +103,8 @@ export function validateCmsConnectionInput(body: unknown): ValidationResult<CmsC
   }
   if (input.credential !== undefined && typeof input.credential !== 'string') {
     errors.push('credential must be text.');
+  } else if (typeof input.credential === 'string' && hasUnsafeSecretCharacters(input.credential)) {
+    errors.push('The credential contains a line break or another control character. Paste it again on one line.');
   }
 
   if (errors.length) return { errors };

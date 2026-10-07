@@ -1,4 +1,4 @@
-import { getArticleById } from '../articles/articles.repository.js';
+import { getArticleById, setArticleStatus } from '../articles/articles.repository.js';
 import { getThemeById } from '../content/content.repository.js';
 import type { ArticleDraftDto } from '../articles/articles.repository.js';
 import { UNTITLED_ARTICLE_LABEL } from '../articles/articles.constants.js';
@@ -31,7 +31,14 @@ import {
   recordConnectionCheck,
 } from './cmsConnections.repository.js';
 import type { CmsConnectionDto } from './cmsConnections.repository.js';
-import { getLink, listLinksForArticle, recordPush, refreshLinkState, upsertLink } from './cmsLinks.repository.js';
+import {
+  getLink,
+  listAllLinks,
+  listLinksForArticle,
+  recordPush,
+  refreshLinkState,
+  upsertLink,
+} from './cmsLinks.repository.js';
 import type { ArticleCmsLinkDto } from './cmsLinks.repository.js';
 
 /**
@@ -1040,6 +1047,146 @@ export async function pushArticle(
   } finally {
     inFlight.delete(articleId);
   }
+}
+
+/* -------------------------------------------------------------- bulk sync --- */
+
+export interface CmsSyncChange {
+  articleId: number;
+  connectionId: number;
+  externalId: string;
+  from: string | null;
+  to: string;
+}
+
+export interface CmsSyncResult {
+  checked: number;
+  /** Links whose remote status differed from what Cynth had recorded. */
+  changed: CmsSyncChange[];
+  /** Articles Cynth now marks published because the default site publishes them. */
+  markedPublished: number[];
+  /** Connections that could not be read, and why. The rest of the sync still ran. */
+  failures: { connectionName: string; message: string }[];
+}
+
+let syncInFlight: Promise<CmsSyncResult> | null = null;
+
+/**
+ * Re-reads EVERY pushed post and records what the CMS now says.
+ *
+ * WHY THIS EXISTS. A link's status was only ever written at push time, or when
+ * someone pressed Refresh on that one article. Publishing is a human act done
+ * in WordPress, so Cynth never saw it: five articles were live on the site
+ * while Cynth still called them drafts (posts 435, 439, 440, 443, 446).
+ *
+ * THE ARTICLE'S OWN STATUS FOLLOWS THE SITE OF RECORD, ONE WAY. When the
+ * default connection reports a post as published, the article is marked
+ * published too, so the Drafts list and the WordPress panel stop disagreeing.
+ * It never goes the other way: a post unpublished in WordPress does not
+ * silently demote an article a human marked published in Cynth.
+ *
+ * Reads only. Nothing is written to any CMS. Overlapping calls (the timer and
+ * a button press) share one run rather than doubling the requests.
+ */
+export function syncLinksFromCms(): Promise<CmsSyncResult> {
+  if (!syncInFlight) {
+    syncInFlight = runSync().finally(() => {
+      syncInFlight = null;
+    });
+  }
+  return syncInFlight;
+}
+
+async function runSync(): Promise<CmsSyncResult> {
+  const result: CmsSyncResult = { checked: 0, changed: [], markedPublished: [], failures: [] };
+  const siteOfRecord = getDefaultConnection()?.id ?? null;
+
+  const byConnection = new Map<number, ArticleCmsLinkDto[]>();
+  for (const link of listAllLinks()) {
+    const list = byConnection.get(link.connectionId) ?? [];
+    list.push(link);
+    byConnection.set(link.connectionId, list);
+  }
+
+  for (const [connectionId, links] of byConnection) {
+    let target: ResolvedTarget;
+    try {
+      target = resolveTarget(connectionId);
+    } catch {
+      // Inactive, deleted or without credentials: nothing to read, and not a
+      // failure of the sync — the connection is simply switched off.
+      continue;
+    }
+
+    for (const link of links) {
+      let remote: CmsRemotePost | null;
+      try {
+        remote = await target.connector.getPost(link.externalId, target.context);
+      } catch (error) {
+        const message = isCmsError(error)
+          ? error.message
+          : sanitizeCmsMessage(error instanceof Error ? error.message : 'Unknown error.', [
+              target.context.secret,
+              target.context.username,
+            ]);
+        result.failures.push({ connectionName: target.connection.name, message });
+        // One unreachable site would otherwise cost a timeout per post.
+        break;
+      }
+
+      result.checked += 1;
+      const status = remote ? remote.status : 'deleted';
+      if (status !== link.externalStatus) {
+        result.changed.push({
+          articleId: link.articleId,
+          connectionId,
+          externalId: link.externalId,
+          from: link.externalStatus,
+          to: status,
+        });
+      }
+      refreshLinkState(link.id, status, remote ? remote.url : link.externalUrl);
+
+      if (status === 'publish' && connectionId === siteOfRecord) {
+        const article = getArticleById(link.articleId);
+        if (article && article.status === 'draft') {
+          setArticleStatus(link.articleId, 'published');
+          result.markedPublished.push(link.articleId);
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Keeps link statuses current without anyone pressing anything: once shortly
+ * after start, then on an interval. Failures are logged and the next tick
+ * tries again. The timer is unref'd so it never holds the process open.
+ */
+export function startCmsStatusSync(intervalMs = 15 * 60 * 1000, firstRunMs = 10_000): () => void {
+  const tick = () => {
+    syncLinksFromCms()
+      .then((result) => {
+        if (result.changed.length || result.failures.length) {
+          console.log(
+            `CMS sync: checked ${result.checked}, ${result.changed.length} changed, ` +
+              `${result.markedPublished.length} marked published, ${result.failures.length} site(s) unreachable.`,
+          );
+        }
+      })
+      .catch((error) => console.error('CMS sync failed:', error instanceof Error ? error.message : error));
+  };
+
+  const first = setTimeout(tick, firstRunMs);
+  const every = setInterval(tick, intervalMs);
+  first.unref();
+  every.unref();
+  return () => {
+    clearTimeout(first);
+    clearInterval(every);
+  };
 }
 
 /**

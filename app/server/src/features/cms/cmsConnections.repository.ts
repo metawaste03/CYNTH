@@ -1,6 +1,12 @@
 import { getDatabase } from '../../shared/database/index.js';
 import type { CmsConnectionRow } from '../../shared/database/types.js';
-import { applySecretEdit, deleteSecret, getSecret, hasSecret } from '../../shared/secrets/secretStore.js';
+import {
+  applySecretEdit,
+  deleteSecret,
+  getSecret,
+  hasSecret,
+  secretEditForDestination,
+} from '../../shared/secrets/secretStore.js';
 import type { CmsConnectionInput } from './cmsConnections.validation.js';
 
 /**
@@ -149,12 +155,18 @@ export function createConnection(input: CmsConnectionInput): CmsConnectionDto {
 
 export function updateConnection(id: number, input: CmsConnectionInput): CmsConnectionDto | null {
   const db = getDatabase();
-  const existing = db.prepare('SELECT credential_env_var FROM cms_connections WHERE id = ?').get(id) as unknown as
-    | { credential_env_var: string | null }
-    | undefined;
+  const existing = db
+    .prepare('SELECT credential_env_var, base_url, connector_type FROM cms_connections WHERE id = ?')
+    .get(id) as unknown as { credential_env_var: string | null; base_url: string; connector_type: string } | undefined;
   if (!existing) return null;
 
-  const envVar = applyCredential(id, input.credential, existing.credential_env_var);
+  // A saved credential is never sent to a site it was not entered for.
+  const credential = secretEditForDestination(
+    input.credential,
+    { url: existing.base_url, kind: existing.connector_type },
+    { url: input.baseUrl, kind: input.connectorType },
+  );
+  const envVar = applyCredential(id, credential, existing.credential_env_var);
 
   db.prepare(`
     UPDATE cms_connections SET

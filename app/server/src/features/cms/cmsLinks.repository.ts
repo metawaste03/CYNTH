@@ -64,6 +64,13 @@ export function listLinksForArticle(articleId: number): ArticleCmsLinkDto[] {
   return rows.map(mapLink);
 }
 
+/** Every link Cynth holds, for the status sync. */
+export function listAllLinks(): ArticleCmsLinkDto[] {
+  const db = getDatabase();
+  const rows = db.prepare('SELECT * FROM article_cms_links ORDER BY id ASC').all() as unknown as ArticleCmsLinkRow[];
+  return rows.map(mapLink);
+}
+
 /** Article ids that have been pushed to at least one CMS, for list badges. */
 export function listPushedArticleIds(): number[] {
   const db = getDatabase();

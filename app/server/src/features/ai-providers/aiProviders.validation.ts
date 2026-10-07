@@ -1,4 +1,5 @@
 import { isValidPurpose } from './aiProviders.constants.js';
+import { hasUnsafeSecretCharacters } from '../../shared/secrets/secretStore.js';
 
 export interface ProviderInput {
   name: string;
@@ -71,6 +72,8 @@ export function validateProviderInput(body: unknown): ValidationResult<ProviderI
 
   if (input.apiKey !== undefined && typeof input.apiKey !== 'string') {
     errors.push('apiKey must be text.');
+  } else if (typeof input.apiKey === 'string' && hasUnsafeSecretCharacters(input.apiKey)) {
+    errors.push('The API key contains a line break or another control character. Paste it again on one line.');
   }
 
   if (errors.length) return { errors };

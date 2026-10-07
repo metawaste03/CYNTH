@@ -1,6 +1,12 @@
 import { getDatabase } from '../../shared/database/index.js';
 import type { AiProviderRow, AiProviderModelRow } from '../../shared/database/types.js';
-import { hasSecret, getSecret, applySecretEdit, deleteSecret } from '../../shared/secrets/secretStore.js';
+import {
+  hasSecret,
+  getSecret,
+  applySecretEdit,
+  deleteSecret,
+  secretEditForDestination,
+} from '../../shared/secrets/secretStore.js';
 import type { ProviderInput, ModelInput } from './aiProviders.validation.js';
 import type { ModelCapabilities, ProviderModelInfo } from '../generation/generation.types.js';
 import { classifyModel } from '../generation/generationPolicy.service.js';
@@ -274,12 +280,19 @@ export function createProvider(input: ProviderInput): ProviderDetailDto {
 
 export function updateProvider(id: number, input: ProviderInput): ProviderDetailDto | null {
   const db = getDatabase();
-  const existing = db.prepare('SELECT api_key_env_var FROM ai_providers WHERE id = ?').get(id) as unknown as
-    | { api_key_env_var: string | null }
-    | undefined;
+  const existing = db
+    .prepare('SELECT api_key_env_var, base_url, provider_type FROM ai_providers WHERE id = ?')
+    .get(id) as unknown as { api_key_env_var: string | null; base_url: string | null; provider_type: string } | undefined;
   if (!existing) return null;
 
-  const envVar = applySecret(id, input.apiKey, existing.api_key_env_var);
+  // A saved key is never sent to an endpoint it was not entered for. The
+  // provider type counts too: with no base URL, the type picks the endpoint.
+  const apiKey = secretEditForDestination(
+    input.apiKey,
+    { url: existing.base_url, kind: existing.provider_type },
+    { url: input.baseUrl, kind: input.providerType },
+  );
+  const envVar = applySecret(id, apiKey, existing.api_key_env_var);
 
   db.prepare(`
     UPDATE ai_providers SET

@@ -65,8 +65,23 @@ export function loadSecrets(): void {
   }
 }
 
+/**
+ * True when a secret value would corrupt the KEY=value file.
+ *
+ * A newline in a value ends that entry and starts another, so a "credential"
+ * containing one could plant any variable it liked into process.env on the
+ * next start. Validators reject these with a readable message; setSecret
+ * refuses them as a last line of defence.
+ */
+export function hasUnsafeSecretCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f]/.test(value);
+}
+
 /** Writes/updates one secret in the file and immediately reflects it in process.env. */
 export function setSecret(envVarName: string, value: string): void {
+  if (hasUnsafeSecretCharacters(value)) {
+    throw new Error('A secret cannot contain line breaks or other control characters.');
+  }
   const entries = readSecretsFile();
   entries.set(envVarName, value);
   writeSecretsFile(entries);
@@ -109,6 +124,41 @@ export function getSecret(envVarName: string | null): string | null {
  * `envVarNameFor` is only called when a name is actually needed, so a record
  * that never receives a secret never acquires an env var name either.
  */
+/**
+ * Where a stored secret is sent: scheme, host and port, lowercased. Null when
+ * there is no URL (e.g. a provider using its type's default endpoint).
+ */
+function destinationOf(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).origin.toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/**
+ * A stored secret must never follow a changed destination.
+ *
+ * "Leave the credential untouched" (undefined) is the right default for an
+ * edit to a name or a description. It is the wrong one when the edit changes
+ * where requests go: the next test or push would send the saved WordPress
+ * password or API key to the new host, which is exactly how a credential is
+ * stolen by anybody who can edit a connection. So when the destination
+ * changes and no new secret was supplied, the stored one is cleared and must
+ * be entered again for the new site.
+ */
+export function secretEditForDestination(
+  incoming: string | undefined,
+  before: { url: string | null; kind?: string | null },
+  after: { url: string | null; kind?: string | null },
+): string | undefined {
+  if (incoming !== undefined) return incoming;
+  const moved =
+    destinationOf(before.url) !== destinationOf(after.url) || (before.kind ?? null) !== (after.kind ?? null);
+  return moved ? '' : undefined;
+}
+
 export function applySecretEdit(
   incoming: string | undefined,
   existingEnvVar: string | null,

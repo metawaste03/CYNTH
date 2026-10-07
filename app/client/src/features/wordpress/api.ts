@@ -128,6 +128,18 @@ export function pushArticle(
   });
 }
 
+export interface CmsSyncResult {
+  checked: number;
+  changed: { articleId: number; connectionId: number; externalId: string; from: string | null; to: string }[];
+  markedPublished: number[];
+  failures: { connectionName: string; message: string }[];
+}
+
+/** Re-reads every pushed post's status. Reads only; writes nothing to any site. */
+export function syncFromCms(): Promise<CmsSyncResult> {
+  return api.post<CmsSyncResult>('/cms/sync', {});
+}
+
 /** Re-reads the remote post so Cynth reflects a status a human changed in the CMS. */
 export function refreshArticleLink(articleId: number, connectionId: number): Promise<ArticleCmsLink> {
   return api.post<{ link: ArticleCmsLink }>(`/articles/${articleId}/cms/refresh`, { connectionId }).then((r) => r.link);

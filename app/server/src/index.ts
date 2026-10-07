@@ -2,6 +2,7 @@ import express from 'express';
 import { env } from './shared/config/env.js';
 import { notFound } from './shared/middleware/notFound.js';
 import { errorHandler } from './shared/middleware/errorHandler.js';
+import { requestGuard } from './shared/middleware/requestGuard.js';
 import { initializeDatabase, closeDatabase, DATABASE_PATH } from './shared/database/index.js';
 import { authorsRouter } from './features/authors/authors.routes.js';
 import { authorSkillsRouter } from './features/authors/authorSkills.routes.js';
@@ -28,9 +29,13 @@ import { loadSecrets } from './shared/secrets/secretStore.js';
 import { backfillMissingSlugs } from './features/articles/articles.repository.js';
 import { backfillMissingVendors } from './features/products/products.repository.js';
 import { serveBuiltClient } from './shared/static/clientStatic.js';
+import { startCmsStatusSync } from './features/cms/cmsPublish.service.js';
 
 const app = express();
 
+// First, before any route or static file: refuse requests addressed to another
+// hostname (DNS rebinding) and writes sent by another website (CSRF).
+app.use(requestGuard);
 app.use(express.json());
 
 // Load any previously-saved credentials (AI provider keys, CMS credentials)
@@ -173,10 +178,16 @@ console.log(
 app.use(notFound);
 app.use(errorHandler);
 
-const server = app.listen(env.port, () => {
-  console.log(`Cynth listening on http://localhost:${env.port}`);
+// An explicit host: with none, Node listens on every interface and Cynth —
+// which has no login — is reachable by anyone on the same network.
+const server = app.listen(env.port, env.host, () => {
+  console.log(`Cynth listening on http://${env.host}:${env.port}`);
   if (clientStatic.serving) console.log(`Open http://localhost:${env.port} to use Cynth.`);
 });
+
+// Publishing happens in WordPress, where Cynth cannot see it. Re-read every
+// pushed post's status shortly after start and then every 15 minutes.
+startCmsStatusSync();
 
 function shutdown() {
   server.close(() => {

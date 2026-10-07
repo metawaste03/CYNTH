@@ -5,7 +5,7 @@ import { listRecentPushHistory } from './cmsLinks.repository.js';
 import { supportedConnectors } from './connectors/index.js';
 import { validateCmsConnectionInput } from './cmsConnections.validation.js';
 import { isCmsError } from './cms.errors.js';
-import { listRemoteAuthors, testConnection } from './cmsPublish.service.js';
+import { listRemoteAuthors, syncLinksFromCms, testConnection } from './cmsPublish.service.js';
 
 /**
  * CMS connection settings.
@@ -157,6 +157,19 @@ cmsRouter.get('/connections/:id/authors', async (req, res) => {
     res.json({ authors: await listRemoteAuthors(id) });
   } catch (error) {
     respondToCmsError(res, error, 'Could not read the site’s user list.');
+  }
+});
+
+/**
+ * Re-reads every pushed post's status from its CMS, so an article published
+ * in WordPress stops showing as a draft here. Reads only; writes nothing to
+ * any site. Also runs on its own every 15 minutes.
+ */
+cmsRouter.post('/sync', async (_req, res) => {
+  try {
+    res.json(await syncLinksFromCms());
+  } catch (error) {
+    respondToCmsError(res, error, 'Could not sync statuses from the CMS.');
   }
 });
 

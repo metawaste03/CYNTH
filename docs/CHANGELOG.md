@@ -2,6 +2,30 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.55.0] - 2026-10-08
+
+### Security
+
+- **Cynth listens on 127.0.0.1 only.** `app.listen` had no host, so it bound to every interface. Cynth has no login, Windows had an inbound Allow rule for node.exe on the Public profile, and the laptop's Wi-Fi was classed Public — anyone on the same network could read every draft, replace live articles and spend provider credit. `CYNTH_SERVER_HOST` overrides it deliberately; `CYNTH_ALLOWED_HOSTS` must then name the hostnames.
+
+- **A request guard refuses DNS rebinding and cross-site writes.** Binding to loopback keeps other machines out but not other websites in this machine's browser. Requests whose `Host` is not this machine are refused (rebinding), and non-GET requests whose `Origin` names another site are refused (CSRF — `push-seo`, `push-featured-image` and `refresh` needed no body and fell back to the Live connection). Scripts sending no Origin, and the Vite proxy, are unaffected.
+
+- **A saved credential no longer follows a changed site address.** Editing a connection's URL kept the stored WordPress password, and the next Test sent it to the new host — the simplest way to steal it. Changing the destination (or the connector/provider type) without entering a new secret now clears the stored one. AI provider keys get the same rule.
+
+- **Secrets cannot contain line breaks.** A newline in a credential wrote an extra `KEY=value` line into `.env.local`, which was loaded into `process.env` on the next start. Refused by both validators and by `setSecret` itself.
+
+### Fixed
+
+- **"Update the live article" unpublished every article with a featured image.** The body update correctly omitted `status`, then the image step sent `status: draft`. The UI said readers saw the new version; the post had gone. It happened to posts 365, 394 and 338 on 2026-10-01, each re-published by hand. The image step now leaves a live post's status alone.
+
+- **Articles published in WordPress showed as drafts in Cynth.** A link's status was only read at push time or on a per-article Refresh, and publishing happens in WordPress where Cynth cannot see it — five live articles still said draft. Every pushed post is now re-read shortly after start and every 15 minutes, and on demand from **Sync from WordPress** on the Articles page. A post published on the default site also marks the article published; it never demotes one.
+
+- **`wordpress.test.ts` wrote test credentials into the real `.env.local`.** It never set `CYNTH_SECRETS_FILE`, and the scratch database's connection ids overlap the real ones, so a test could overwrite or delete a real site's password. The stray `CYNTH_CMS_1_CREDENTIAL` came from here.
+
+- **The mock WordPress ignored the `status` it was sent**, which is how the unpublish passed every test. It now applies it, as WordPress does.
+
+**Verified**: 10 new tests; the live-update regression test fails with the fix removed. Run against a copy of the real database, the sync marked articles 27, 41, 42, 43 and 44 published and left 45–47 as drafts. **552 tests pass.**
+
 ## [0.54.0] - 2026-10-03
 
 ### Added
