@@ -4,6 +4,7 @@ export interface ProductInput {
   title: string;
   brand?: string;
   category?: string;
+  isFeaturedPick?: boolean;
   shortDescription?: string;
   description?: string;
   affiliateLink?: string;
@@ -98,6 +99,9 @@ export function validateProductInput(body: unknown): ValidationResult<ProductInp
       title,
       brand: (input.brand as string | undefined)?.trim() || undefined,
       category: (input.category as string | undefined)?.trim() || undefined,
+      // Absent means "unchanged", which is what lets a partial save leave
+      // the pick flag alone rather than clearing it.
+      isFeaturedPick: typeof input.isFeaturedPick === 'boolean' ? input.isFeaturedPick : undefined,
       shortDescription: (input.shortDescription as string | undefined) || undefined,
       description: (input.description as string | undefined) || undefined,
       affiliateLink: (input.affiliateLink as string | undefined)?.trim() || undefined,

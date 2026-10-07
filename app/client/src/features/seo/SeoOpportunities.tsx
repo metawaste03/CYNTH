@@ -30,6 +30,9 @@ interface Props {
   diagnostics: SeoDiagnostics | null;
   onLinkDecision: (id: number, status: 'approved' | 'rejected') => void;
   onSourceDecision: (id: number, status: 'approved' | 'rejected') => void;
+  /** Writes every approved link into the body. Paid, so it is one button for all of them. */
+  onPlaceLinks: () => void;
+  placingLinks: boolean;
   busyId: number | null;
 }
 
@@ -45,17 +48,33 @@ export function SeoOpportunities({
   diagnostics,
   onLinkDecision,
   onSourceDecision,
+  onPlaceLinks,
+  placingLinks,
   busyId,
 }: Props) {
+  // Approved but not yet in the body. The count is what the button is for, and
+  // when it is zero there is nothing to spend money on.
+  const awaiting = internalLinks.filter((link) => link.status === 'approved').length;
   return (
     <div className="seo-opportunities">
       {/* ------------------------------------------------ internal links */}
       <section>
         <h4>Internal links</h4>
         <p className="seo-form__hint">
-          Only articles that exist in Cynth are ever suggested. Approving one records the decision — nothing is
-          inserted into the article.
+          Only articles that exist in Cynth are ever suggested. Approving one records the decision; “Place approved
+          links” is what writes them into the article. A link is only made to an article that is published on the
+          live site, because a link to a draft is a 404.
         </p>
+        {awaiting > 0 && (
+          <div className="seo-finding__actions">
+            <button type="button" className="button" disabled={placingLinks} onClick={onPlaceLinks}>
+              {placingLinks ? 'Placing…' : `Place ${awaiting} approved link${awaiting === 1 ? '' : 's'}`}
+            </button>
+            <span className="seo-card__note">
+              One model call for all of them. The article body changes, so push it again afterwards.
+            </span>
+          </div>
+        )}
         {internalLinks.length === 0 ? (
           <p className="seo-empty">No internal link opportunities were found.</p>
         ) : (

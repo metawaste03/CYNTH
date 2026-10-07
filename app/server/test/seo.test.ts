@@ -40,6 +40,10 @@ const seoRepo = await import('../src/features/seo/seo.repository.js');
 const { parseSeoDocument, countPhraseOccurrences } = await import('../src/features/seo/seoDocument.js');
 const { runDeterministicAnalysis } = await import('../src/features/seo/seoDeterministic.service.js');
 const { SEO_DIMENSION_WEIGHTS } = await import('../src/features/seo/seo.constants.js');
+const { cleanMetaDescription, cleanSeoTitle } = await import('../src/features/seo/metaDescription.service.js');
+const { listArticlesMissingSearchMetadata } = await import('../src/features/seo/seo.repository.js');
+const { SEO_TITLE_MAX_CHARS } = await import('../src/features/seo/seo.constants.js');
+const { getSeoFieldMapping } = await import('../src/features/cms/seoAdapter.js');
 const { calculateSeoScore } = await import('../src/features/seo/seoScore.service.js');
 const { parseSeoAnalysisResponse, extractJsonObject, SeoResponseParseError } = await import(
   '../src/features/seo/seoAi.parse.js'
@@ -225,6 +229,120 @@ function deterministicFor(articleId: number) {
 }
 
 const codes = (findings: { code: string }[]) => findings.map((finding) => finding.code);
+
+
+/* =============== meta description + Rank Math (Milestone 37) ============ */
+
+test('META: a model reply is cleaned of the wrapping models add', () => {
+  // Short copy comes back quoted and labelled more often than not, and
+  // neither belongs in a meta tag.
+  assert.equal(cleanMetaDescription('"A clean description."'), 'A clean description.');
+  assert.equal(cleanMetaDescription('Meta description: A clean description.'), 'A clean description.');
+  assert.equal(cleanMetaDescription('```\nA clean description.\n```'), 'A clean description.');
+  assert.equal(cleanMetaDescription('  A   clean\n description.  '), 'A clean description.');
+});
+
+test('META: an over-long description is trimmed at a boundary, never mid-word', () => {
+  // The defect this covers: a hard slice produced "...when the tracking
+  // itself becomes count", which reads as broken rather than as shortened.
+  const long =
+    'For anyone wearing or buying a sleep tracker, this guide breaks down which metrics are trustworthy, '
+    + 'which to discard, and when the tracking itself becomes counterproductive for actual rest.';
+  const out = cleanMetaDescription(long);
+
+  assert.ok(out.length <= 160, 'it is within the SERP limit');
+  assert.ok(!long.slice(out.length, out.length + 1).match(/\w/) || out.endsWith('.'),
+    'it does not stop in the middle of a word');
+  assert.ok(!/[,;:]$/.test(out), 'and it does not end on a dangling comma');
+  assert.ok(!/\b(and|but|or|with|for|from|to|of|in|on)$/i.test(out), 'nor on a hanging conjunction');
+});
+
+test('META: a description already short enough is returned untouched', () => {
+  const fine = 'What happens when you stop paying for a recovery wearable, and what keeps working.';
+  assert.equal(cleanMetaDescription(fine), fine);
+});
+
+test('RANK MATH: the mapping writes only the fields that have values', () => {
+  const mapping = getSeoFieldMapping('wordpress', 'rankmath');
+  assert.ok(mapping, 'a mapping is registered for Rank Math');
+
+  const full = mapping!.map({
+    seoTitle: 'A SERP title',
+    metaDescription: 'A description.',
+    canonicalUrl: 'https://example.test/a',
+    targetQuery: 'budget hiking backpack',
+    structuredData: null,
+    internalLinks: [],
+    externalLinks: [],
+  });
+  assert.deepEqual(full, {
+    rank_math_description: 'A description.',
+    rank_math_title: 'A SERP title',
+    rank_math_canonical_url: 'https://example.test/a',
+    rank_math_focus_keyword: 'budget hiking backpack',
+  });
+
+  // An empty string would overwrite whatever a human had written in Rank
+  // Math's own editor, which is worse than sending nothing.
+  const sparse = mapping!.map({
+    seoTitle: null,
+    metaDescription: 'Only this one.',
+    canonicalUrl: null,
+    targetQuery: null,
+    structuredData: null,
+    internalLinks: [],
+    externalLinks: [],
+  });
+  assert.deepEqual(sparse, { rank_math_description: 'Only this one.' });
+});
+
+test('RANK MATH: an unknown SEO target selects no mapping at all', () => {
+  // The honest behaviour for a stack Cynth has not been taught: send nothing
+  // rather than guess at post-meta keys that may not exist.
+  assert.equal(getSeoFieldMapping('wordpress', 'yoast'), null);
+  assert.equal(getSeoFieldMapping('wordpress', ''), null);
+  assert.equal(getSeoFieldMapping('ghost', 'rankmath'), null);
+});
+
+
+
+/* ============ combined search metadata (Milestone 39) =================== */
+
+test('SEARCH META: an SEO title is only wanted when the headline does not fit', () => {
+  // A second field that repeats the headline is a field to maintain for
+  // nothing, so the candidate list asks for one only when the editorial title
+  // is actually too long for a results page.
+  const short = makeArticle('Short Enough Title', GOOD_BODY);
+  const long = makeArticle(
+    'A Deliberately Long Editorial Headline That Runs Well Past What Any Search Result Will Ever Show',
+    GOOD_BODY,
+  );
+
+  const missing = listArticlesMissingSearchMetadata();
+  const shortRow = missing.find((row) => row.id === short.id)!;
+  const longRow = missing.find((row) => row.id === long.id)!;
+
+  assert.equal(shortRow.needsDescription, true, 'both still need a description');
+  assert.equal(shortRow.needsSeoTitle, false, 'but a title that fits needs no second one');
+  assert.equal(longRow.needsSeoTitle, true, 'a title that overruns does');
+});
+
+test('SEARCH META: an article that has everything it needs is not a candidate', () => {
+  const article = makeArticle('Another Short Title', GOOD_BODY);
+  seoRepo.setSeoMetadataField(article.id, 'meta_description', 'A description that already exists.');
+
+  const missing = listArticlesMissingSearchMetadata();
+  assert.equal(missing.find((row) => row.id === article.id), undefined, 'nothing left to write');
+});
+
+test('SEARCH META: an over-long SEO title from the model is discarded, not truncated', () => {
+  // Truncating would defeat the point of the field — it exists precisely
+  // because the editorial title is too long.
+  assert.equal(cleanSeoTitle('x'.repeat(SEO_TITLE_MAX_CHARS + 1)), '');
+  assert.equal(cleanSeoTitle('"A Fitting Title"'), 'A Fitting Title');
+  assert.equal(cleanSeoTitle('SEO title: A Fitting Title'), 'A Fitting Title');
+});
+
 
 test.after(() => {
   mock.close();
@@ -1518,8 +1636,19 @@ test('BACKLINKS: an authority figure without a source is refused', () => {
 
 /* ====================== the CMS SEO adapter ============================= */
 
-test('CMS: no SEO plugin is hardcoded, and nothing is sent when Cynth holds nothing', () => {
-  assert.deepEqual(listSeoFieldMappings(), [], 'no plugin mapping is registered');
+test('CMS: no SEO plugin is assumed, and nothing is sent when Cynth holds nothing', () => {
+  // This used to assert the mapping registry was EMPTY, which was the right
+  // guarantee while no SEO stack had been chosen. Rank Math has now been
+  // chosen (Milestone 37), so the guarantee is restated rather than dropped:
+  // a mapping exists only for a target a connection explicitly names, and an
+  // unnamed or unknown target still selects nothing.
+  const registered = listSeoFieldMappings();
+  assert.ok(
+    registered.every((mapping) => mapping.connectorType && mapping.target),
+    'every registered mapping names the connector and target it is for',
+  );
+  assert.equal(getSeoFieldMapping('wordpress', ''), null, 'a connection with no target selects no mapping');
+  assert.equal(getSeoFieldMapping('wordpress', 'some-plugin'), null, 'and an unknown one is not guessed at');
 
   const bare = makeArticle('No Metadata Budget Hiking Backpack Guide', GOOD_BODY);
   assert.equal(buildCmsSeoMetadata(articles.getArticleById(bare.id)!), null, 'nothing to send, so nothing is sent');

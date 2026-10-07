@@ -338,12 +338,47 @@ test('VALIDATION: a complete article reaches READY', async () => {
   assert.ok(result.output.checked.includes('product references'));
 });
 
-test('VALIDATION: a missing required section blocks and hands over to a person', async () => {
+test('WRITER: a reply that skips a required section never reaches the article', async () => {
+  /**
+   * This used to be written the other way round: strip a section, let the
+   * writer stage save it, and check final validation blocked it at the end.
+   * That is what production did too — and it cost a full review cycle on an
+   * article that was one paragraph long before anything complained.
+   *
+   * The writer now refuses it, so the damaged article never exists.
+   */
   const { pipeline } = makePipeline();
   const parsed = JSON.parse(article());
   parsed.sections = parsed.sections.filter((s: any) => s.key !== 'steps');
   reply = JSON.stringify(parsed);
+
+  await assert.rejects(
+    () => gen.runArticleGeneration(pipeline.id, BRIEF as never),
+    /missing 1 of \d+ required sections \(steps\)/,
+  );
+});
+
+test('VALIDATION: a missing required section blocks and hands over to a person', async () => {
+  /**
+   * Still worth proving, because the writer is no longer the only way an
+   * article loses a section: the revision stage parses without a template,
+   * and a human can edit one out in the app.
+   *
+   * So the damage is planted the way it can still happen — on the stored
+   * article, after a clean generation.
+   */
+  const { pipeline } = makePipeline();
+  reply = article();
   await gen.runArticleGeneration(pipeline.id, BRIEF as never);
+
+  const stored = JSON.parse(
+    db.prepare('SELECT structured_content AS c FROM articles WHERE id = ?').get(pipeline.articleId).c,
+  );
+  stored.sections = stored.sections.filter((s: any) => s.key !== 'steps');
+  db.prepare('UPDATE articles SET structured_content = ? WHERE id = ?').run(
+    JSON.stringify(stored),
+    pipeline.articleId,
+  );
 
   const result = validation.runFinalValidation(pipeline.id)!;
   assert.equal(result.output.passed, false);
@@ -369,13 +404,34 @@ test('VALIDATION: placeholders, bad links and unattached products all block', as
 });
 
 test('VALIDATION: a missing FAQ blocks when the template requires one', async () => {
+  // Planted after generation, for the same reason as the section above: the
+  // writer now refuses an empty FAQ outright when the template requires one.
   const { pipeline } = makePipeline();
-  reply = article({ faq: [] });
+  reply = article();
   await gen.runArticleGeneration(pipeline.id, BRIEF as never);
+
+  const stored = JSON.parse(
+    db.prepare('SELECT structured_content AS c FROM articles WHERE id = ?').get(pipeline.articleId).c,
+  );
+  stored.faq = [];
+  db.prepare('UPDATE articles SET structured_content = ? WHERE id = ?').run(
+    JSON.stringify(stored),
+    pipeline.articleId,
+  );
 
   const result = validation.runFinalValidation(pipeline.id)!;
   assert.equal(result.output.passed, false);
   assert.ok(result.output.findings.some((f) => /requires an FAQ/i.test(f.detail)));
+});
+
+test('WRITER: an empty FAQ is refused when the template requires one', async () => {
+  const { pipeline } = makePipeline();
+  reply = article({ faq: [] });
+
+  await assert.rejects(
+    () => gen.runArticleGeneration(pipeline.id, BRIEF as never),
+    /required sections \(faq\)/,
+  );
 });
 
 test('VALIDATION: warnings alone do not block', async () => {

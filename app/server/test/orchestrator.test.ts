@@ -260,9 +260,18 @@ test('READINESS: an area with no active author refuses, naming what to do', () =
 });
 
 test('TERMINAL: a validation failure hands over rather than looping', async () => {
-  // An article missing a required section: written, reviewed, then blocked.
+  /**
+   * An article that passes the writer and fails final validation: written,
+   * reviewed, then blocked.
+   *
+   * It used to be damaged by removing a required section, which the WRITER now
+   * refuses outright — so the article never reached validation and this test
+   * was proving the wrong thing. An unresolved placeholder is damage of the
+   * kind that genuinely survives to the end: valid structure, complete
+   * sections, and a line no reader should ever see.
+   */
   const broken = JSON.parse(ARTICLE);
-  broken.sections = broken.sections.filter((s: any) => s.key !== 'steps');
+  broken.sections[1].body = `${broken.sections[1].body}\n\nCosts about [INSERT PRICE].`;
   stage(TOPIC, KEYWORDS, CLASSIFY, JSON.stringify(broken), PASSING_REVIEW);
 
   const started = orchestrator.startArticlePipeline({ themeId: theme.id, mode: 'development' }) as { pipelineId: number };

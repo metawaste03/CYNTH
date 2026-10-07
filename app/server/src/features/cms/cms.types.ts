@@ -101,8 +101,32 @@ export interface CmsDraftPayload {
    * than having its featured image cleared by an absent value.
    */
   featuredImage: CmsDraftImage | null;
-  /** Reserved for the SEO milestone. Always null today. */
   seo: CmsSeoMetadata | null;
+  /**
+   * Which SEO plugin the target site runs, from the connection.
+   *
+   * Selects a mapping in seoAdapter.ts. Null — or a value with no registered
+   * mapping — means no plugin fields are sent, which is what every connection
+   * did before a stack was chosen.
+   */
+  seoTarget: string | null;
+  /**
+   * The thematic area this article belongs to, as a NAME.
+   *
+   * A name rather than an id because Cynth does not know the site's term ids,
+   * and rather than a slug because the two vocabularies were deliberately
+   * aligned on names — Cynth's thematic areas were renamed to match the
+   * categories EveryFiveDays publishes, and the slugs were not.
+   *
+   * A connector must resolve it against categories that ALREADY EXIST and
+   * must never create one. A misspelling that silently creates "Sleeping
+   * Gadget" beside "Sleeping Gadgets" is the failure this rule exists to
+   * prevent; it has already happened once on the product side.
+   *
+   * Null when the article has no thematic area, in which case no category is
+   * sent and the CMS keeps whatever it has.
+   */
+  categoryName: string | null;
 }
 
 /** A post as it exists in the CMS. Ids are text: Cynth must not assume every CMS numbers its posts. */
@@ -165,6 +189,72 @@ export interface CmsConnector {
 
   /** Updates an existing draft in place. Never changes its published state. */
   updateDraft(externalId: string, payload: CmsDraftPayload, context: CmsCallContext): Promise<CmsRemotePost>;
+
+  /**
+   * Replaces the body of a post that is already PUBLISHED.
+   *
+   * Separate from `updateDraft`, and separate on purpose: the two carry
+   * different risks and need different payloads.
+   *
+   * Implementations must send NO `status`. `updateDraft` sets `status: draft`
+   * unconditionally, which on a live post would not update it but UNPUBLISH
+   * it — the article would drop off the site mid-request while the caller saw
+   * a success. Leaving the field out means the CMS keeps whatever the post
+   * already is, so a published post stays published and a scheduled one stays
+   * scheduled.
+   *
+   * Implementations must also send NO `slug`. The slug is the live URL: every
+   * inbound link, every share and every indexed result points at it, and
+   * quietly moving it is not part of "fix a paragraph".
+   */
+  updatePublished(externalId: string, payload: CmsDraftPayload, context: CmsCallContext): Promise<CmsRemotePost>;
+
+  /**
+   * Writes ONLY the SEO metadata fields onto an existing post.
+   *
+   * Separate from `updateDraft` because it is allowed where that is not: a
+   * published post's CONTENT is out of Cynth's hands, but its search-result
+   * metadata is not content, and refusing to fix a meta description on a
+   * published article would make the whole feature useless on exactly the
+   * articles that matter.
+   *
+   * Implementations must send the mapped SEO fields and nothing else — no
+   * title, body, excerpt, slug or status — so this can never alter what a
+   * reader sees on the page, or its published state.
+   *
+   * Returns null when the target has no SEO mapping, so the caller can say so
+   * rather than report a success that wrote nothing.
+   */
+  updateSeoMetadata(
+    externalId: string,
+    seo: CmsSeoMetadata,
+    seoTarget: string | null,
+    context: CmsCallContext,
+  ): Promise<CmsRemotePost | null>;
+
+  /**
+   * Uploads an image and sets it as an existing post's featured image.
+   *
+   * Separate from `updateDraft` for the same reason `updateSeoMetadata` is,
+   * and it was found the same way: an article was published, its featured
+   * image was chosen afterwards, and nothing could send it. `updateDraft`
+   * writes `status: draft` on every call — the invariant the connector is
+   * built around — so using it here would have unpublished a live article to
+   * give it a picture.
+   *
+   * A featured image is not the article's content: it does not change a word
+   * of what a reader reads. Implementations must send the media upload and the
+   * `featured_media` pointer and nothing else — no title, body, excerpt, slug
+   * or status.
+   *
+   * Returns null when the CMS accepted the upload but would not attach it, so
+   * the caller can say what happened rather than report a success.
+   */
+  updateFeaturedImage(
+    externalId: string,
+    image: CmsDraftImage,
+    context: CmsCallContext,
+  ): Promise<CmsRemotePost | null>;
 
   /** Reads a post's current state. Null when the CMS no longer has it. */
   getPost(externalId: string, context: CmsCallContext): Promise<CmsRemotePost | null>;

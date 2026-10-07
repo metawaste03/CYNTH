@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { ArticleProductCard } from './api';
 import './ArticleContent.css';
+import { shopLabel } from '../../shared/services/vendor';
 
 /**
  * The article body, with `[[product:id]]` markers shown as the cards they
@@ -33,7 +34,9 @@ const MAX_CARD_FEATURES = 4;
 function ProductCard({ product }: { product: ArticleProductCard }) {
   // The card says what the product is FOR — the one line a reader needs at the
   // point the writer reached for it.
-  const blurb = product.useCase ?? product.description;
+  // Matches the published card's precedence exactly. The long description is
+  // for the writer, not for a card sitting beside a paragraph.
+  const blurb = product.useCase ?? product.shortDescription ?? product.description;
 
   return (
     <aside className="efd-card" data-product-id={product.productId}>
@@ -62,8 +65,11 @@ function ProductCard({ product }: { product: ArticleProductCard }) {
             like the real thing rather than merely looking like it. */}
         {product.affiliateUrl ? (
           <p className="efd-card__cta">
+            {/* The same wording the published card uses. It read "Check
+                price" unconditionally, which made the preview disagree with
+                the page for every product in the library. */}
             <a href={product.affiliateUrl} target="_blank" rel="sponsored nofollow noopener">
-              Check price
+              {shopLabel(product.affiliateUrl)}
             </a>
           </p>
         ) : (

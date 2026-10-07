@@ -145,10 +145,20 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
       ? `${preflight.connection.name} (${hostOf(preflight.connection.baseUrl)})`
       : 'the configured site';
 
+    /**
+     * A live replacement gets its own wording, because it is a different act.
+     * "Update the draft" is housekeeping; this one changes a page people can
+     * read right now, and the sentence has to say so before the click.
+     */
     const confirmation =
       preflight.action === 'create'
         ? `Create a new draft post on ${site}? It will be a draft — nothing is published.`
-        : `Update the existing draft post ${preflight.link?.externalId} on ${site}? Its current content there will be replaced by this article.`;
+        : preflight.action === 'update'
+          ? `Update the existing draft post ${preflight.link?.externalId} on ${site}? Its current content there will be replaced by this article.`
+          : `Post ${preflight.link?.externalId} on ${site} is PUBLISHED. Replacing it changes what readers see immediately.
+
+` +
+            'The post stays published and its URL does not change. Continue?';
 
     if (!window.confirm(confirmation)) return;
 
@@ -161,12 +171,49 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
       // are the same except on a first render, and sending the article
       // somewhere other than the site just described would be the worst
       // possible mismatch.
-      const pushed = await pushArticle(articleId, preflight.action, preflight.connection?.id ?? selectedId);
+      const pushed = await pushArticle(articleId, preflight.action, preflight.connection?.id ?? selectedId, {
+        confirmed: preflight.action === 'update_published',
+      });
       setResult(pushed);
       load();
       onPushed?.();
     } catch (err) {
       if (err instanceof ApiError) {
+        /**
+         * The SECOND acknowledgement, and the only place it is ever asked
+         * for: somebody edited the post in WordPress after Cynth last sent
+         * it. The first confirmation covered "replace the live article"; it
+         * did not cover "discard the edit somebody else made", so that is
+         * asked separately, naming what is about to be lost.
+         */
+        if (err.code === 'remote_edited_since_push') {
+          const overwrite = window.confirm(`${err.errors.join(' ')}
+
+Overwrite it anyway?`);
+          if (overwrite) {
+            try {
+              const forced = await pushArticle(
+                articleId,
+                preflight.action,
+                preflight.connection?.id ?? selectedId,
+                { confirmed: true, acknowledgeRemoteEdits: true },
+              );
+              setResult(forced);
+              load();
+              onPushed?.();
+              return;
+            } catch (second) {
+              if (second instanceof ApiError) {
+                setErrors(second.errors);
+                setErrorCode(second.code);
+              } else {
+                setErrors(['The push failed. Please try again.']);
+              }
+              load();
+              return;
+            }
+          }
+        }
         setErrors(err.errors);
         setErrorCode(err.code);
       } else {
@@ -210,11 +257,17 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
   if (!preflight) return null;
 
   const { connection, link, action, mapping } = preflight;
-  const isUpdate = action === 'update';
+  const isUpdate = action === 'update' || action === 'update_published';
+  const isLiveUpdate = action === 'update_published';
 
   return (
     <section className="wp-push">
-      <h3>WordPress</h3>
+      {/* BOTH NUMBERS, SIDE BY SIDE. This panel is the one place Cynth's
+          article id and WordPress's post id are both in play, and confusing
+          them sends an edit to the wrong article. */}
+      <h3>
+        WordPress <span className="wp-push__article-id">Cynth article #{articleId}</span>
+      </h3>
 
       {!connection ? (
         <div className="wp-push__unconfigured">
@@ -400,9 +453,11 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
                 ? isUpdate
                   ? 'Updating…'
                   : 'Sending…'
-                : isUpdate
-                  ? 'Update WordPress Draft'
-                  : 'Push to WordPress as Draft'}
+                : isLiveUpdate
+                  ? 'Update the live article'
+                  : isUpdate
+                    ? 'Update WordPress Draft'
+                    : 'Push to WordPress as Draft'}
             </button>
 
             {link && (
@@ -420,8 +475,18 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
 
           {isUpdate && preflight.ready && (
             <p className="wp-push__warning" role="note">
-              This will replace the content of post #{link?.externalId} on {connection.name}. It will not create
-              another post, and it will not publish anything.
+              {isLiveUpdate ? (
+                <>
+                  Post #{link?.externalId} on {connection.name} is <strong>published</strong>. This replaces what
+                  readers see right now. It stays published, its URL does not change, and if anybody has edited it in
+                  WordPress since the last push you will be told before anything is overwritten.
+                </>
+              ) : (
+                <>
+                  This will replace the content of post #{link?.externalId} on {connection.name}. It will not create
+                  another post, and it will not publish anything.
+                </>
+              )}
             </p>
           )}
 
@@ -473,9 +538,11 @@ export function WordPressPushPanel({ articleId, onPushed }: WordPressPushPanelPr
                           ? 'First push'
                           : entry.operation === 'update'
                             ? 'Update'
-                            : entry.operation === 'refresh'
-                              ? 'Status check'
-                              : 'Connection test'}
+                            : entry.operation === 'update_published'
+                              ? 'Replaced live article'
+                              : entry.operation === 'refresh'
+                                ? 'Status check'
+                                : 'Connection test'}
                         {' · '}
                         {entry.status === 'success' ? 'Success' : 'Failed'}
                         {entry.connectionName ? ` · ${entry.connectionName}` : ''}

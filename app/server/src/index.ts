@@ -26,6 +26,7 @@ import { pipelineRouter } from './features/pipeline/pipeline.routes.js';
 import { ensureMediaUploadsDir } from './features/media/media.upload.js';
 import { loadSecrets } from './shared/secrets/secretStore.js';
 import { backfillMissingSlugs } from './features/articles/articles.repository.js';
+import { backfillMissingVendors } from './features/products/products.repository.js';
 import { serveBuiltClient } from './shared/static/clientStatic.js';
 
 const app = express();
@@ -49,6 +50,17 @@ console.log(
 // Idempotent: gives a slug to any article created before slugs were stored.
 const slugged = backfillMissingSlugs();
 if (slugged > 0) console.log(`Backfilled slugs for ${slugged} article(s).`);
+
+/**
+ * Idempotent: reads the retailer from each product's affiliate link.
+ *
+ * Not a schema migration — the `vendor` column always existed. Nothing had
+ * ever written to it, so every row was NULL, no card carried a `vendor=`
+ * attribute, and every product button on the site read the neutral fallback
+ * "Check price" rather than naming the shop.
+ */
+const vendored = backfillMissingVendors();
+if (vendored > 0) console.log(`Read the retailer from ${vendored} product link(s).`);
 
 console.log(
   dbStatus.projectSeeded

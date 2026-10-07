@@ -4,6 +4,7 @@ import type { Product, ProductDetail, ProductImage, ProductInput, ProductListIte
 export interface ProductListFilters {
   search?: string;
   category?: string;
+  isFeaturedPick?: boolean;
   status?: 'active' | 'inactive';
   /** A theme id as a string, or 'none' for products with no thematic area. */
   themeId?: string;

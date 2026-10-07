@@ -20,6 +20,7 @@ import { ThemesPage } from './features/content/ThemesPage';
 import { ThemeDetail } from './features/content/ThemeDetail';
 import { DraftsPage } from './features/articles/DraftsPage';
 import { ArticleView } from './features/articles/ArticleView';
+import { ArticlesByArea } from './features/articles/ArticlesByArea';
 import { AIProvidersList } from './features/ai-providers/AIProvidersList';
 import { AIProviderDetail } from './features/ai-providers/AIProviderDetail';
 import { NewAIProvider } from './features/ai-providers/NewAIProvider';
@@ -61,7 +62,10 @@ function App() {
         <Route path="content/themes" element={<ThemesPage />} />
         <Route path="content/themes/:id" element={<ThemeDetail />} />
         <Route path="drafts" element={<DraftsPage />} />
-        <Route path="articles/:id" element={<ArticleView />} />
+        <Route path="articles">
+          <Route index element={<ArticlesByArea />} />
+          <Route path=":id" element={<ArticleView />} />
+        </Route>
         <Route path="seo-review" element={<SeoReview />} />
         <Route path="quality-gate" element={<QualityGate />} />
         <Route path="settings">

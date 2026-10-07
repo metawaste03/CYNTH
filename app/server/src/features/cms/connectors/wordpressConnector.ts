@@ -1,9 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { CmsError, sanitizeCmsMessage } from '../cms.errors.js';
+import { getSeoFieldMapping } from '../seoAdapter.js';
 import type {
   CmsCallContext,
+  CmsSeoMetadata,
   CmsConnectionTestResult,
   CmsConnector,
+  CmsDraftImage,
   CmsDraftPayload,
   CmsRemoteAuthor,
   CmsRemotePost,
@@ -218,30 +221,48 @@ function mapPost(body: unknown, baseUrl: string): CmsRemotePost {
  * than sent empty: an absent excerpt leaves WordPress to derive its own,
  * whereas an empty string would overwrite one an editor had written.
  */
-function draftBody(payload: CmsDraftPayload): Record<string, unknown> {
+function draftBody(payload: CmsDraftPayload, options: { keepRemoteState?: boolean } = {}): Record<string, unknown> {
   const body: Record<string, unknown> = {
     title: payload.title,
     content: payload.content,
-    status: DRAFT_STATUS,
   };
 
-  if (payload.slug) body.slug = payload.slug;
+  /**
+   * `keepRemoteState` is what makes an update to a PUBLISHED post possible.
+   *
+   * Sending `status: draft` at a live post does not update it, it unpublishes
+   * it — the article drops off the site and the caller still sees a 200. And
+   * the slug is the live URL that every inbound link and indexed result points
+   * at; moving it is not part of "fix a paragraph". Both fields are therefore
+   * omitted rather than sent, so WordPress keeps what it already has.
+   */
+  if (!options.keepRemoteState) {
+    body.status = DRAFT_STATUS;
+    if (payload.slug) body.slug = payload.slug;
+  }
+
   if (payload.excerpt) body.excerpt = payload.excerpt;
   if (payload.remoteAuthorId) body.author = Number(payload.remoteAuthorId) || payload.remoteAuthorId;
 
-  // payload.seo now carries real, human-owned SEO metadata (Milestone 14),
-  // and is still deliberately not written to any post field.
+  // SEO METADATA (Milestone 37).
   //
-  // The reason is that WordPress itself stores none of it: an SEO title and a
-  // meta description live in whichever SEO plugin the site runs, each under
-  // its own post-meta keys. EveryFiveDays' plugin has not been chosen, and
-  // writing keys for a plugin that may not be installed would create orphaned
-  // post meta that no one ever reads.
+  // WordPress core stores none of this: an SEO title and a meta description
+  // live in whichever plugin the site runs, each under its own post-meta
+  // keys. The connection says which plugin, seoAdapter.ts says which keys,
+  // and a target with no registered mapping sends nothing at all rather than
+  // writing keys that may not exist.
   //
-  // The mapping seam already exists — see cms/seoAdapter.ts, whose registry
-  // is empty for exactly this reason. When the SEO stack is decided, one
-  // SeoFieldMapping is registered there and applied here, and nothing else in
-  // Cynth changes.
+  // Emitted under `meta`, which WordPress accepts only for keys the site has
+  // registered with `show_in_rest`. Unregistered keys are dropped silently by
+  // WordPress — see docs/rank-math-rest-meta.php for the mu-plugin that
+  // registers Rank Math's.
+  if (payload.seo && payload.seoTarget) {
+    const mapping = getSeoFieldMapping('wordpress', payload.seoTarget);
+    if (mapping) {
+      const fields = mapping.map(payload.seo);
+      if (Object.keys(fields).length) body.meta = fields;
+    }
+  }
 
   return body;
 }
@@ -260,6 +281,143 @@ function draftBody(payload: CmsDraftPayload): Record<string, unknown> {
  * failed and retries, producing a second copy of an article that is already
  * there. The image is re-sent on the next update.
  */
+/**
+ * Uploads the file and returns the new attachment's id, or null.
+ *
+ * Split out of `attachFeaturedImage` so the published-post path can reuse it
+ * without also inheriting that function's `status: draft` write.
+ */
+async function uploadMedia(image: CmsDraftImage, context: CmsCallContext): Promise<number | null> {
+  const bytes = await readFile(image.filePath);
+
+  const upload = await fetch(`${apiRoot(context.baseUrl)}/wp/v2/media`, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      authorization: authHeader(context),
+      'content-type': image.mimeType,
+      // WordPress reads the filename from this header for a raw-body upload,
+      // which avoids assembling a multipart request by hand.
+      'content-disposition': `attachment; filename="${sanitizeUploadFilename(image.filename)}"`,
+    },
+    body: new Uint8Array(bytes),
+    signal: AbortSignal.timeout(MEDIA_UPLOAD_TIMEOUT_MS),
+  });
+
+  if (!upload.ok) return null;
+
+  const media = (await upload.json().catch(() => null)) as Record<string, unknown> | null;
+  const mediaId = media && typeof media.id === 'number' ? media.id : null;
+  if (mediaId === null) return null;
+
+  // Alt text is a separate write and only happens when the editor actually
+  // wrote some — an empty alt attribute is better than an invented one.
+  if (image.altText) {
+    await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/media/${mediaId}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      body: { alt_text: image.altText },
+    });
+  }
+
+  return mediaId;
+}
+
+/**
+ * Finds an EXISTING category by name. Never creates one.
+ *
+ * WHY IT WILL NOT CREATE. A category created from a typo is invisible until
+ * somebody notices two nearly identical ones in the sidebar — which is exactly
+ * what happened to the product library, where "Sleeping Gadget" sat beside
+ * "Sleeping Gadgets". A name that does not match anything means the article is
+ * filed wherever it already was, and the mismatch is reported rather than
+ * papered over with a new term.
+ *
+ * WHY IT COMPARES DECODED NAMES. WordPress stores and returns a term name with
+ * HTML entities — "Sleep &amp; Recovery" — while Cynth holds the plain
+ * characters. Comparing them raw matches nothing, which is the same trap the
+ * picks shortcode hit on the site side.
+ */
+async function findCategoryId(name: string, context: CmsCallContext): Promise<number | null> {
+  const wanted = decodeEntities(name).trim().toLowerCase();
+
+  const match = (body: unknown): number | null => {
+    if (!Array.isArray(body)) return null;
+    for (const term of body as Record<string, unknown>[]) {
+      const termName = typeof term.name === 'string' ? decodeEntities(term.name).trim().toLowerCase() : '';
+      if (termName === wanted && (typeof term.id === 'number' || typeof term.id === 'string')) {
+        return Number(term.id);
+      }
+    }
+    return null;
+  };
+
+  /**
+   * THE WHOLE LIST FIRST, AND THE MATCH DONE HERE.
+   *
+   * The obvious call is `?search=<name>`, and it is the fragile one: search is
+   * the CMS's own tokenising, and the name Cynth holds ("Sleep & Recovery")
+   * does not have to match the way the CMS indexes the one it stores. Reading
+   * the categories and comparing them here depends on nothing but the names
+   * themselves — and for a site with five of them it is a single request.
+   */
+  const all = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/categories?per_page=100&orderby=id`, {
+    method: 'GET',
+    headers: { authorization: authHeader(context) },
+  });
+
+  if (all.ok) {
+    const hit = match(all.json);
+    if (hit !== null) return hit;
+    // Fewer than a full page means we have seen every category there is, so a
+    // miss is a real miss and a second request would only repeat it.
+    if (Array.isArray(all.json) && all.json.length < 100) return null;
+  }
+
+  // A site with more than a hundred categories: ask it to find this one.
+  const searched = await callWordPress(
+    `${apiRoot(context.baseUrl)}/wp/v2/categories?per_page=100&search=${encodeURIComponent(wanted)}`,
+    { method: 'GET', headers: { authorization: authHeader(context) } },
+  );
+
+  return searched.ok ? match(searched.json) : null;
+}
+
+/** The handful of entities WordPress actually emits in a term name. */
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&#0?38;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;|&#8217;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+}
+
+/**
+ * The request body plus the category, when one resolves.
+ *
+ * Resolution is a network call, so it cannot live in `draftBody`, which is
+ * synchronous and is also used by the preview. An unresolvable name sends no
+ * `categories` at all rather than an empty array: an empty array would strip
+ * the post of every category it has, turning "I could not find your category"
+ * into "I removed the one you had".
+ */
+async function bodyWithCategory(
+  payload: CmsDraftPayload,
+  context: CmsCallContext,
+  options: { keepRemoteState?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  const body = draftBody(payload, options);
+  if (!payload.categoryName) return body;
+
+  const id = await findCategoryId(payload.categoryName, context);
+  if (id !== null) body.categories = [id];
+
+  return body;
+}
+
 async function attachFeaturedImage(
   post: CmsRemotePost,
   payload: CmsDraftPayload,
@@ -431,7 +589,7 @@ export const wordpressConnector: CmsConnector = {
     const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts`, {
       method: 'POST',
       headers: { authorization: authHeader(context) },
-      body: draftBody(payload),
+      body: await bodyWithCategory(payload, context),
     });
 
     if (!response.ok) throwForFailure(response, context, 'create posts');
@@ -444,7 +602,30 @@ export const wordpressConnector: CmsConnector = {
     const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}`, {
       method: 'POST', // WordPress accepts POST for updates as well as PUT/PATCH.
       headers: { authorization: authHeader(context) },
-      body: draftBody(payload),
+      body: await bodyWithCategory(payload, context),
+    });
+
+    if (!response.ok) throwForFailure(response, context, 'edit this post');
+    const post = mapPost(response.json, context.baseUrl);
+
+    return attachFeaturedImage(post, payload, context);
+  },
+
+  /**
+   * Replaces the body of a post that is already live.
+   *
+   * The same request as `updateDraft` minus two fields, and those two
+   * omissions are the entire point — see `draftBody`'s `keepRemoteState`.
+   */
+  async updatePublished(
+    externalId: string,
+    payload: CmsDraftPayload,
+    context: CmsCallContext,
+  ): Promise<CmsRemotePost> {
+    const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      body: await bodyWithCategory(payload, context, { keepRemoteState: true }),
     });
 
     if (!response.ok) throwForFailure(response, context, 'edit this post');
@@ -454,6 +635,69 @@ export const wordpressConnector: CmsConnector = {
   },
 
   /** Reads a post's current state. Null — not an error — when WordPress no longer has it. */
+  /**
+   * SEO metadata only. Deliberately narrow.
+   *
+   * The body of this request contains `meta` and nothing else, so it cannot
+   * change a word of the article, its slug, or whether it is published. That
+   * is what makes it safe to run against a published post, which `updateDraft`
+   * rightly refuses.
+   */
+  async updateSeoMetadata(
+    externalId: string,
+    seo: CmsSeoMetadata,
+    seoTarget: string | null,
+    context: CmsCallContext,
+  ): Promise<CmsRemotePost | null> {
+    if (!seoTarget) return null;
+    const mapping = getSeoFieldMapping('wordpress', seoTarget);
+    if (!mapping) return null;
+
+    const fields = mapping.map(seo);
+    if (!Object.keys(fields).length) return null;
+
+    const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      body: { meta: fields },
+    });
+
+    if (!response.ok) throwForFailure(response, context, 'edit this post');
+    return mapPost(response.json, context.baseUrl);
+  },
+
+  /**
+   * Attaches a featured image to a post without touching anything else.
+   *
+   * Note what is NOT in the body: no `status`. Every other write this module
+   * makes to a post restates "draft", which is the invariant it is built
+   * around — and which is exactly why this path had to exist. A published
+   * article whose image was chosen after the push could not be given that
+   * image without being unpublished to receive it.
+   *
+   * Unlike the push-time attach, a failure here is fatal rather than silent.
+   * There, the article was already safely in WordPress and a missing picture
+   * was the lesser outcome; here, attaching the picture is the entire
+   * operation, so reporting success without one would be a lie.
+   */
+  async updateFeaturedImage(
+    externalId: string,
+    image: CmsDraftImage,
+    context: CmsCallContext,
+  ): Promise<CmsRemotePost | null> {
+    const mediaId = await uploadMedia(image, context);
+    if (mediaId === null) return null;
+
+    const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      body: { featured_media: mediaId },
+    });
+
+    if (!response.ok) throwForFailure(response, context, 'edit this post');
+    return mapPost(response.json, context.baseUrl);
+  },
+
   async getPost(externalId: string, context: CmsCallContext): Promise<CmsRemotePost | null> {
     const response = await callWordPress(
       `${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}?context=edit`,

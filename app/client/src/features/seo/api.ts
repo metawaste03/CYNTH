@@ -161,3 +161,63 @@ export function setBacklinkStatus(
     .patch<{ opportunity: BacklinkOpportunity }>(`/web-intelligence/backlinks/${id}`, { status })
     .then((r) => r.opportunity);
 }
+
+/**
+ * Writes whatever search-result metadata an article is missing.
+ *
+ * Fills only empty fields — never replaces a description or title already
+ * written by the editor or by the article writer.
+ */
+export function writeSearchMetadata(articleId: number): Promise<{
+  result: { metaDescription: string; seoTitle: string; written: string[]; model: string };
+}> {
+  return api.post(`/seo/articles/${articleId}/meta-description`, {});
+}
+
+/** Sends only the SEO fields to the CMS. Safe on a published post — it touches no content. */
+export function pushSeoMetadata(articleId: number, connectionId?: number | null): Promise<{
+  fields: string[];
+  message: string;
+  post: { id: string; status: string };
+}> {
+  return api.post(`/articles/${articleId}/cms/push-seo`, connectionId ? { connectionId } : {});
+}
+
+/**
+ * Applies every actionable finding to the article body, in one model call.
+ *
+ * Paid. Metadata findings are not included — those are written directly by
+ * `writeSearchMetadata` — and findings Cynth marks "no action required" are
+ * left alone.
+ */
+export function applyFindings(
+  articleId: number,
+  confirmedCost: boolean,
+): Promise<{
+  result: { applied: number; skipped: number; model: string; findings: { code: string; summary: string }[] };
+}> {
+  return api.post(`/seo/articles/${articleId}/apply-findings`, { confirmedCost });
+}
+
+/**
+ * Writes every approved internal link into the article body, in one call.
+ *
+ * Paid. Only links whose target is publicly readable on the live site are
+ * placed — the rest come back in `held`, each with the reason, because a link
+ * to an unpublished post is a 404 with extra steps. `articleChanged` says
+ * whether the body moved, which decides whether the article needs re-pushing.
+ */
+export function applyInternalLinks(
+  articleId: number,
+  confirmedCost: boolean,
+): Promise<{
+  result: {
+    inserted: { linkId: number; targetTitle: string; url: string }[];
+    alreadyPresent: { linkId: number; targetTitle: string; url: string }[];
+    held: { linkId: number; targetTitle: string; reason: string }[];
+    model: string | null;
+    articleChanged: boolean;
+  };
+}> {
+  return api.post(`/seo/articles/${articleId}/apply-internal-links`, { confirmedCost });
+}

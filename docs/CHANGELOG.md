@@ -2,6 +2,533 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.54.0] - 2026-10-03
+
+### Added
+
+- **The Dashboard's Articles card opens the catalogue, grouped by area.** It was the only counting card with no destination: it reported a total and went nowhere. A total answers "how much have I made"; the question behind the click is "what have I made, and where are the holes", and that one is per area.
+
+  Each area shows what it holds and how it stands — written, live, never pushed, words — and each row carries the article number, title, word count, SEO score, where it is on the site, author and last update. All of it read from the database; nothing inferred and no model asked, because how many articles exist and how long they are are questions about stored data.
+
+- **The whole card is the click target.** Reported plainly: "I want it to be clickable when I click on it." The cards looked like buttons and behaved like paragraphs with a small link in the corner, so the obvious click did nothing. A card with nowhere to go stays a plain element — making a dead card look clickable would be the same mistake in reverse.
+
+- **A stale SEO score is labelled, not hidden.** A score measured against a body that has since changed is not a lower score, it is a score for a different article. It is shown greyed with "stale" beside it, and it agrees with the SEO gate because both now call the same fingerprint function.
+
+### Changed
+
+- **`fingerprintOf` is extracted from `contentFingerprint`** so a caller holding database columns can ask "does this stored analysis still describe this article?" without reimplementing the hash. A second copy of that formula would agree until the day somebody changed one of them and then disagree silently, which is the worst way for a staleness check to fail. Its NUL separators are preserved exactly — they are why the file reads as binary to grep.
+
+### Fixed
+
+- **The score column showed a dash for every article while thirty-two real scores sat in the table.** The query filtered on `status = 'succeeded'`; the analysis service writes `'success'` and `'partial'`. Guessing at another module's vocabulary rather than reading it cost the entire column. `partial` is included: that is a run where the AI pass failed and the deterministic analysis stood, so its score is real, and hiding it would report an analysed article as never analysed.
+
+- **"On the site" could report the wrong site.** An article pushed to both the local install and production has two link rows, and the query took whichever came back first — which on a recent local push would have shown "draft on site" for something live on everyfivedays.com. It now prefers the https connection.
+
+**Verified**: 7 new tests, including word-count parity with the Drafts list and the live-site preference. **542 tests pass.**
+
+## [0.53.0] - 2026-10-01
+
+### Added
+
+- **A way to check whether an area covers what its brief says it covers.** Asked plainly: can we confirm Smart Pet Care is not skewing toward cats? The brief already said it must not — *"DOGS AND CATS BOTH. The back catalogue skews heavily to cats and to devices; correct for that rather than continuing it"* — sitting in the one place topic research reads. **Nothing anywhere could say whether it was working.** It was not: seven of the nine species-specific products in the area were cat-specific, five of those litter boxes, and the one article with a species was a litter-box guide carrying 104 cat mentions against 12 dog.
+
+  `npm run balance` reports the composition of articles, mentions and the product library, and the same numbers now reach the topic research stage as a fact. The coverage block already asked the model to notice when an area "clusters on one sub-subject, one product category or one species" — but it could only infer that from a list of titles, and the skew it was meant to catch lived in the product library, which it cannot see at all.
+
+  **A tally, not a verdict.** It counts words against a declared vocabulary; it cannot read an article, and a dental-care piece that happens to use a dog in its examples is not thereby a dog article. Focus is decided by dominance — twice the mentions and at least two — so a single aside does not flip it. Nothing is ever blocked on this basis.
+
+  Only areas that declare facets are measured. There is no general theory of editorial balance here: one area has a stated requirement that two things be covered, and now there is a way to see whether they are.
+
+### Fixed
+
+- **The first version of the report reassured about the exact thing it was built to watch.** It judged on article counts alone, and over a library of seven cat products and one dog product it printed "No clear skew between the declared facets" — because the two articles happened to be one each. It now reads articles, mention weight and products separately, and a sample too small to mean anything says so rather than returning a verdict.
+
+- **The area lookup could resolve a name non-deterministically.** Themes are scoped per project, so two projects may legally hold an area with the same name; the query took whichever row came back first. Found through a test whose article counts came back 0 while its product counts were right — the fixtures had hung off a duplicate theme while the service resolved the seeded one.
+
+**Verified**: 5 new tests, covering dominance over presence, a single passing mention counting as neither, the product library being measured, and the prompt block stating counts rather than judgements. **535 tests pass.**
+
+## [0.52.0] - 2026-10-01
+
+### Added
+
+- **Every article row shows its number.** Reported plainly: "you keep numbering articles 28 & 36 — there's no way for me to know which is which once they're in draft." True, and it was a gap on my side, not the user's: every report, script and log in this project refers to an article by its id, and that id appeared nowhere a person could see while browsing drafts. The list now carries it, in tabular figures so a column lines up, muted so it does not compete with the headline, and selectable so it can be copied into a command. The WordPress panel shows it beside the WordPress post id, because that panel is the one place both numbering systems are in play and confusing them sends an edit to the wrong article.
+
+- **Cynth files an article under its own thematic area on push.** It used to send no category at all, so every article arrived uncategorised and was filed by hand. One was filed wrong — a Sleep & Recovery piece published under Smart Pet Care — which kept it off its own category page, put it on somebody else's, and was invisible until a reader went looking for it. Cynth already holds the area; it is the field the article was commissioned under.
+
+  **It will never create a category.** A name that matches nothing sends no `categories` field, and the mismatch is reported. A category created from a typo is invisible until somebody notices two near-identical ones in the sidebar — which has already happened on the product side, where "Sleeping Gadget" sat beside "Sleeping Gadgets".
+
+  **An unresolvable name sends no field rather than an empty array.** An empty array would have stripped the post of every category it had, turning "I could not find yours" into "I removed the one you were using".
+
+  Matching reads the whole category list and compares here, rather than asking the CMS to `search`. Search is the CMS's own tokenising, and the name Cynth holds does not have to match the way the CMS indexes the one it stores. Names are decoded first — WordPress returns "Sleep &amp; Recovery" while Cynth holds the plain characters, the same trap the picks shortcode hit on the site side.
+
+- **`[efd_latest_by_area]` and `[efd_area_explorer]`** replace the last two hardcoded sections on the EveryFiveDays homepage. Both carried five invented articles with invented dates, and **nine of the ten article links on the homepage answered 404** — the posts had never existed. They were mockup furniture from the original build, exactly like the fifteen product cards.
+
+  An area with nothing published is left out rather than padded with a placeholder, which is how the old rows came to exist in the first place. The explorer's tabs are real category links before any JavaScript runs, so a reader without it sees every panel stacked rather than an empty box.
+
+  After the swap, all twenty article links on the homepage resolve.
+
+**Verified**: 22 checks against a stubbed WordPress for the two new components, five new tests for the category on push, and **530 tests pass** on the Cynth side.
+
+## [0.51.0] - 2026-10-01
+
+### Added
+
+- **Cynth can replace an article that is already published.** It used to refuse, and the refusal gave two reasons — but only one of them was a policy. The other was mechanical, and it was the more dangerous of the two: `updateDraft` sends `status: draft` unconditionally, so "updating" a live post would not have updated it, it would have **unpublished** it. The article would have dropped off the site mid-request while the caller was shown a success.
+
+  The connector now has `updatePublished`, which sends **no `status`** — so WordPress keeps whatever the post already is, and a published post stays published — and **no `slug`**, because the slug is the live URL that every inbound link, share and indexed result points at, and moving it is not part of "fix a paragraph".
+
+  The policy reason stands and is enforced here instead:
+
+  - `update_published` is a **third push mode**, not a flag, so no existing call site can reach it by accident and no default can drift into it.
+  - It needs an **explicit yes every time**, never defaulted — the route treats anything but a literal `true` as no, the same rule the spend gate uses.
+  - If somebody **edited the post in WordPress** after Cynth last pushed it, it refuses again with `remote_edited_since_push` and names the two timestamps. One blanket "yes" must not cover both risks: a person confirming "replace the live article" has not been told there is unmerged work on the other side. A missing timestamp on either side counts as edited — not knowing is not the same as knowing it was untouched.
+  - The push **history records it distinctly**, because the audit trail for "who replaced what a reader was seeing" is exactly what someone would come looking for, and hiding it inside `update` would bury it.
+  - The success message says *"readers see the new version now"* rather than the old *"nothing has been published"*, which would have been a lie in the one place it matters most.
+
+  The ordinary `update` still refuses on a published post, and now says which button to use instead of sending the editor to WordPress.
+
+### Changed
+
+- **`SAFETY: every write asked for a draft` is restated, not relaxed.** It asserted `status === 'draft'` on every write, which was right while every write announced a status. A live update must announce none. The invariant is now the one that was always meant: a write either asks for a draft or says nothing about status at all — neither can publish — plus a positive check that the no-status path really ran rather than never being exercised.
+
+**Verified**: six new tests covering the unconfirmed refusal, the draft misfire, the remote-edit stop and its override, the payload carrying no status and no slug, and the distinct history entry. **525 tests pass.**
+
+## [0.50.0] - 2026-09-30
+
+### Added
+
+- **An approved internal link is now actually a link.** Reported plainly: the Opportunities panel offers internal links between related articles, and approving one did nothing. That was true, it was written down in two places — `seoAdapter.ts` said "Nothing downstream inserts these into the article body", and the table's own schema said the status could never be `inserted` because no code wrote a link — and the evidence was unambiguous: **ten approved links across six articles, and zero `href`s in those six bodies.**
+
+  `internalLinks.service.ts` places them, one model call per ARTICLE rather than per link, because each successive call would see a body the last one had already changed.
+
+  **Placement is the model's job, and measuring proved it had to be.** The obvious implementation is to find the stored anchor text in the body and wrap it. Against the real backlog that would have placed ONE of the ten: the anchor suggestions are target article *titles*, which do not appear in the source prose. Two of the accidental matches were fragments sitting inside headings, where a link has no business being. So the prompt asks the model to find the sentence already about the target and link words that are **already there** — it may not write a new sentence, because a new sentence is an unreviewed claim.
+
+  **It refuses to link to a page a reader cannot open.** A draft's URL is a `?p=340` query permalink that 404s for anyone not logged in, so linking to one would manufacture broken links inside finished articles. The URL comes from `article_cms_links.external_url` — what WordPress answered with — never from a permalink structure Cynth guessed at. `is_default` is deliberately ignored when choosing among a target's links: the default connection here is a dead local install, so trusting that flag would have pointed every link at `everyfivedays.local`.
+
+  **Three guards, because the expected change is a handful of characters.** A pass that returns a shorter article, or loses a `[[product:id]]` marker, is refused and nothing is saved. And a link is marked `inserted` only after the saved body has been read back and found to contain the URL — a link recorded as placed against an article that never got it is the exact failure this closes.
+
+- **`npm run apply:links`**, with `--refresh` and a free dry run that says which targets are live, which are still drafts, and how many model calls a real run would cost.
+
+  `--refresh` exists because of a trap found on the first real run: Cynth only learns a post's status when it pushes it, so an article published in WordPress afterwards is still recorded here as a draft — and a draft is what this refuses to link to. Three of the five "not published yet" targets were in fact live on the site. `--refresh` asks the CMS before deciding anything.
+
+- **"Place approved links" in the Opportunities panel**, with the count of what is waiting. The hint beside it no longer says nothing is inserted into the article, because now something is.
+
+### Fixed
+
+- **Not placing a link is a legitimate answer, and no longer reads as a failure.** Two of the first five attempts came back with no link and both were right to: the opportunity finder had matched those pairs on shared thematic vocabulary and said so in its own reason — *"No matching phrase exists in this article yet, so the anchor text would need to be written in."* The pass forbids writing text in, so the model correctly declined. Those now return as `held` with that explanation instead of a `provider_error`.
+
+  The alternative — appending a "Related reading" list — was rejected because the site already renders exactly that automatically from the post's category, through `[efd_related_articles]`. A second, worse copy inside the body is not an improvement.
+
+- **A script that makes model calls must load the secret store.** `apply-internal-links.ts` reached the spend gate and failed with "No API key is stored", which reads like a missing key rather than an unloaded one — the key lives in `.env.local` and only the server was calling `loadSecrets()`. It cost a run of five articles to find out.
+
+**Result**: 6 links placed across 4 articles, every one on words already in the prose and mid-article — `laptop-only setups`, `Creatine monohydrate`, `a box and a raised seat`, `around eye level`, `paid subscription`, `caffeine and L-theanine combination`. 2 links held on a target that has never been pushed to the site; 2 declined because the article genuinely never discusses the target. **519 tests pass**, 10 of them new.
+
+## [0.49.0] - 2026-09-30
+
+### Changed
+
+- **EveryFiveDays' category names are now the single vocabulary.** Cynth and the site had drifted and only two of the five matched — `Cognitive Performance` against `Cognitive Performance & Nootropics`, `Fitness Technology` against `Fitness Tech & Biohacking`, `Productive Workspaces` against `Productive Workspace Setups`. The site's names are the ones a reader sees, so they win. `npm run align:themes` renamed the three thematic areas, and `normalise:categories` moved all 34 products with them — which is exactly the behaviour that script was built for.
+
+  **This replaced a translation table I had already written.** Mapping WP category slugs to Cynth category names would have worked until somebody renamed one side, and then rendered nothing on the pages it no longer matched — an empty section reads as a section nobody filled in, not as a bug. One vocabulary cannot drift from itself.
+
+  Renaming is safe referentially: articles, products and themes are joined by id, never by name. Cynth does not set WordPress categories on push, so nothing in the CMS path depends on the old names.
+
+### Added
+
+- **`[efd_picks]` reads its own category.** On a category archive it shows that area's picks; on the home page or blog index it shows every area's. One shortcode serves all seven pages, so nothing has to be kept in step by hand. `category="all"` forces the combined row on a category page, and a named `category` still wins anywhere.
+
+  An entity-encoded category name is decoded before matching — WordPress stores "Sleep &amp; Recovery" and the product meta holds the plain characters, so comparing them raw would match nothing.
+
+**Verified**: 16 checks against a stubbed WordPress, covering the row/scroll switch, category filtering, context detection, the entity decode, the `all` override, the limit, unticked products never appearing, and `rel="sponsored nofollow"` surviving. **509 tests pass** on the Cynth side.
+
+## [0.48.0] - 2026-09-30
+
+### Added
+
+- **Editor's picks are chosen in Cynth and rendered by the site.** The category pages carried fifteen hardcoded product cards — five groups of three, one per thematic area, every one of them rendered on every category page, so Smart Pet Care showed a rowing machine and an office chair. None carried an `id`, so none resolved against the registry: no image, no affiliate link, no button. They were mockup furniture from the original build.
+
+  A **Editor's pick** checkbox on the product form sets a flag that rides along on the registry push. `[efd_picks]` reads it: with a `category` it renders that area's picks, without one it renders every area's for the home and blog pages. The decision lives in Cynth because it is editorial and made while looking at the product — and because a flag held only in WordPress would be overwritten by the next push.
+
+  **No cap.** The three in the original design was a layout decision, from the build spec: *"the picks rows put three cards side by side at roughly 370px each."* Not an SEO rule — there is no such rule. Three or fewer lay out as the row the design was drawn for; four or more scroll horizontally, so ticking a fourth widens the row instead of stranding one card on a second line.
+
+  An area with nothing ticked renders **nothing**, not an empty row: a blank section on a live page reads as broken.
+
+  Verified against a stubbed WordPress with `php -l` and a fixture harness — 11 checks covering the row/scroll switch, category filtering, the limit, unticked products never appearing, and `rel="sponsored nofollow"` surviving.
+
+- A save that does not mention the flag **leaves it alone**, so any other form or script cannot silently unpick a product and empty the row over time.
+
+### Fixed
+
+- **Four test files pointed at the wrong environment variable and wrote to the real database.** `CYNTH_DB_PATH` is silently ignored — the variable is `CYNTH_DB_DIR` — so `featuredPick.test.ts` created **20 fixture products** (#45–#64: "Litter Box", "Pet thing a"…) in the live library across two runs, and `publicationMarket.test.ts` left two empty settings rows behind.
+
+  Caught because the registry export suddenly reported 54 products and 16 editor's picks against a library of 34 with none ticked. Removed, with a snapshot taken first; none of the fixtures had been linked to an article. All four files now set `CYNTH_DB_DIR`.
+
+**Tests**: 509 pass, 6 new.
+
+## [0.47.0] - 2026-09-30
+
+### Changed
+
+- **Product categories are the five thematic areas, and the form fills them in.** The Category field was a free-text box sitting beside a Thematic Area dropdown, and the two said the same thing — so the box collected variants of the dropdown's own answer: "Pet Product", "Pet Products", "Pet Device", "Pet device", "Pet Treats", "Pet treats", "Sleep Gadget", "Sleep Gadgets", "Cognitive Performance", "Cognitive Permance". **Seventeen categories for thirty-four products**, all of them listed in the filter.
+
+  Category is now a select of the thematic areas, placed below the thematic area because it follows from it, and choosing an area sets it. It does not overwrite a category deliberately made different — only one that is empty or still matches the area it was following, because changing the theme should not quietly undo a considered choice. A value from before the list settled stays selectable, so editing an old product does not silently re-file it.
+
+  `npm run normalise:categories` collapsed the existing thirty-four: **32 changed, 17 categories down to 5.** Every one derived from the product's thematic area rather than by matching the old text, because the area is a real reference to a real row and the text was always a paraphrase of it. Unthemed products fall back to matching the old text against the area names; anything still unresolved is left exactly as it is. The names are read from the themes table, so renaming an area and re-running moves its products with it.
+
+### Note
+
+Two rows the migration deliberately did not decide for anybody:
+
+- **#16 "Petmate Basic Open Plastic Cat Litter Pan"** has its thematic area set to **Sleep & Recovery**, so the rule gave it that category. The category now matches the area; the area itself looks wrong.
+- **#22 "RingConn Gen 2 Smart Ring"** has no thematic area and its old category "Fitness Tech" is not an area name, so it was left untouched and is the one value outside the five.
+
+Fixing either means setting the thematic area and re-running, which is one command.
+
+**Tests**: 503 pass.
+
+## [0.46.0] - 2026-09-28
+
+### Added
+
+- **SEO findings can now be applied to the article.** Reported plainly: the Findings panel lists warnings and recommendations and there is no way to correct any of them. That was true, and deliberate — approving a finding recorded a decision and changed nothing, because nothing in Cynth could edit a written article. `PUT /articles/:id` edits the brief, never the prose, and the only thing that had ever rewritten a body was the pipeline's single automatic revision.
+
+  On one real article, **13 of 17 findings needed body edits**: seven FAQ answers too thin to be quoted, an answer buried in a 631-word section, an empty FAQ heading, a missing definition sentence, and a target query that never appeared in the prose. Every one was unactionable.
+
+  **All of them are applied in ONE model call.** Sent one at a time they would cost thirteen times as much, and — worse — each call after the first would be editing an article the previous one had already changed, so a later fix could quietly undo an earlier one. The findings go over as a single specification, the same shape the reviewer's specification uses.
+
+  Deliberately excluded: metadata findings, which already have a path that writes the field directly, and findings Cynth itself answers with "no action required" — sending those would ask a model to fix something nobody thinks is broken.
+
+  One instruction earns its place. Several findings ask for a passage to be *longer*, and a model told only that will restate what is already there — satisfying the word count and making the article worse. So it is told what "longer" must consist of (a reason, a number, a worked example, a caveat) and reminded that merging into a neighbour is the alternative the finding itself offers.
+
+  Paid, editor-triggered, and outside the pipeline's one-revision cap — which governs what Cynth does on its own, not what an editor asks for. Product markers are preserved, and the rewrite is held to the author's voice for the same reason the editorial revision is.
+
+### Note
+
+Article length is not an SEO factor, so the templates' "hard ceiling" stays advisory. Worth knowing what it currently means in practice: every article in the library exceeds its template's stated maximum, by 4% on the newest and up to 87% on the longest.
+
+**Tests**: 503 pass, 4 new.
+
+## [0.45.0] - 2026-09-28
+
+### Fixed
+
+- **A writer that skipped the article was recorded as a success.** Opus 5.5 returned ONE section of the nine its template requires — syntactically perfect JSON, correct title, correct excerpt, `faq: []`, `sources: []`, a single hero paragraph — and the stage passed. **2,028 output tokens in 30 seconds, where the same template draws 7,000–10,700 in 110–156 seconds on Opus 5.** Nothing was truncated; the model closed the object properly and stopped.
+
+  It surfaced only downstream, as a reviewer producing an unusual volume of corrections, and an editor noticing the reviewer was working too hard. Templates have always carried a `required` flag per section. Nothing read it, and the only check was that at least ONE section came back — which one did.
+
+  The writer stage now fails a reply that omits required sections, naming them, so the run stops cheaply instead of carrying a one-paragraph article through a full review.
+
+  **The first version of this check would have rejected every good article in the library.** Run against articles 33, 35 and 36 before shipping, it flagged all three for a missing `faq` section: they deliver the FAQ as a top-level `faq` list, which is the correct shape and always has been. A required section is now satisfied by its own field where it has one. Found by checking real data, not by a test.
+
+### Changed
+
+- **`article_writer` and `topic_research` reverted to `claude-opus-5`.** Opus 5.5 is newer and 20% cheaper, and on the one article it wrote it produced a quarter of the expected output. One sample is not a verdict on the model, but it is enough to stop using it on articles: Opus 5 has six clean runs behind it.
+
+- The `article_generation` and `seo_review` capability defaults stay on Sonnet 5 — those feed manual generation and the SEO audit, not the pipeline.
+
+### Note
+
+Three existing tests planted damage by removing a section from the writer's reply, then checked final validation blocked it at the end — the same path production took. Two were rewritten to plant the damage on the stored article instead, which is how it can still happen (the revision stage parses without a template, and a human can edit in the app); the third now uses an unresolved placeholder, which is damage that genuinely survives to validation. The guarantees were restated, not dropped, and two new tests cover the writer's refusal.
+
+**Tests**: 499 pass, 7 new.
+
+## [0.44.1] - 2026-09-28
+
+### Fixed
+
+- **The model changes in 0.44.0 were being made to the wrong system.** Cynth resolves models two ways: the `article_generation` capability, used by the standalone generation path, and `pipeline_role_models`, used by the pipeline that actually writes the articles. Three successive reassignments of the `article_generation` default — Sonnet 4.6 to Opus 5.5 to Sonnet 5 — never touched what writes an article. The writer had been `claude-opus-5` throughout.
+
+  This is the capability/default trap from Milestone 15 in a new place: holding a capability, and being *the model a stage runs on*, are different facts, and a reassignment that looks like it landed can land somewhere else entirely. Worth stating in full because three changes were reported as done and none did what was intended.
+
+### Changed
+
+- **`article_writer` and `topic_research` moved from `claude-opus-5` to `claude-opus-5.5`** — $4/$20 against $5/$25, so newer and 20% cheaper than what was running. These are the two roles Cynth's own metadata marks "Highest quality": the writer produces the prose, and topic research decides what gets written at all.
+
+- **The reviewer and revision roles are deliberately left on `gpt-5.6-sol-pro`.** The role definition asks for "preferably a different model family from the writer", and a same-family reviewer rationalises the blind spots it wrote with. Reviewing Claude's prose with GPT is the design, not an oversight.
+
+- The 0.44.0 reassignments stand where they land: manual generation and SEO analysis both run Sonnet 5 at $2/$10, against Sonnet 4.6's $3/$15.
+
+## [0.44.0] - 2026-09-28
+
+### Changed
+
+- **The writer is now `anthropic/claude-sonnet-5`**, replacing `claude-sonnet-4.6`. Opus 5.5 was assigned first and then reversed on the numbers. Worth stating plainly, because the reason given for the switch was efficiency: Opus 5.5 is **cheaper than previous Opus releases** ($4/$20 per million against Opus 5's $5/$25) but **33% more expensive than the Sonnet 4.6 it replaces** ($3/$15). Articles have a length band, so output tokens are roughly fixed and the bill rises with the price. The trade is quality for cost, not cost for cost. `claude-sonnet-5` sits at $2/$10 — newer AND a third cheaper than 4.6 — and that is what the writer runs on: **a third cheaper than the model it replaced, not a third dearer.** Opus 5.5 stays registered and unassigned, one click away. **SEO review moved to Sonnet 5 as well**, so every paid text stage is now a third cheaper than it was this morning; Sonnet 4.6 is no longer assigned to anything.
+
+### Added
+
+- **Words can be allowed into an image.** The no-lettering rules were written for models that cannot spell, and they cost far more than the clause they enforce: no book facing the camera, no labelled packaging, no paper in frame at all, no marked casing on any device — most of what a product publication would naturally photograph. `allowText` lifts the image model's clause and the director's scene rules **together**, since lifting one without the other changes nothing. The printed-matter guard stands down too, rather than re-rolling a scene for saying "label". Off by default.
+
+  One rule does not lift: a real brand name or logo. That is a claim about a product, not a rendering problem, and no model's competence excuses it. A test asserts it survives.
+
+- **The image model is choosable per article.** A picker on the Featured Image panel lists every model with the image-generation capability, defaulting to the assigned one. Previously the only way to try another model was to reassign the global default.
+
+- **Nano Banana Pro and GPT-5 Image are registered**, disabled as defaults. Bake-off on one scene: Seedream 4.5 $0.04 at 3642×2048; Nano Banana Pro $0.135 at 1376×768 — better atmosphere, 2.6× fewer pixels, 3.4× the price. **GPT-5 Image cannot produce 16:9 at all** (1:1, 3:2, 2:3 only) and rejected the request outright.
+
+**Tests**: 492 pass, 3 new.
+
+## [0.43.0] - 2026-09-28
+
+### Fixed
+
+- **An article priced an entire buyer's guide in pounds.** "£300–£600" in the headline and 67 more pound figures through the body, for a publication whose readers are in the United States. Nothing had ever told the writer where its readers live: the brief carried an audience, a theme and a topic, the topic happened to be typed with a pound sign, and every stage downstream followed it without question. A scan of all eleven articles found it in exactly one — the rest already used dollars — so this was one topic's phrasing propagating, not a systemic default.
+
+  **Re-denominated one-for-one, not converted.** The article is built on round figures and a running total that has to keep adding up; a real exchange rate would have produced $380–$760 and destroyed both. The database was snapshotted first (`cynth-backup-2026-09-28-pre-currency.db`).
+
+### Added
+
+- **The publication's market and currency are now stated to every stage that writes prose.** `publication.market` and `publication.currency` are settings, defaulting to the United States and US dollars, injected into the writer's and reviewer's briefs. Written as a positive instruction with its exception spelled out — a product sold only outside the market keeps its own currency and is named as such, rather than being silently relabelled — because "do not use pounds" invites a model to think about pounds and says nothing about euros.
+
+**Tests**: 489 pass, 3 new.
+
+## [0.42.0] - 2026-09-28
+
+### Added
+
+- **`npm run export:registry` writes the EveryFiveDays product registry from Cynth.** The site's registry wins over an article placement for the affiliate URL and the image — deliberately, so a changed link is fixable in one place — but the only thing that could fill it was a script that reads a WordPress install. Nothing created entries from Cynth, where products are actually maintained, so **11 of 22 products had no registry entry** and their cards published with no picture. The exporter writes `products/registry.json` and stages the image files; `deploy.mjs products` remains the only thing that talks to the server.
+
+  Two deliberate behaviours: it **omits empty values**, because the importer writes every key it is handed and blank `efd_image_url`/`efd_image_id` would erase the picture from every product already live; and its dry run **compares only the keys it sends**, because comparing whole objects called all twelve existing products "changed" over a difference that writes nothing.
+
+- **PHP 8.3.35 installed** at `C:\tools\php` from the official Windows zip, SHA-256 verified against the vendor's published checksum. No installer, no PATH entry, no admin rights. `efd-site.php` now lints clean, and a reflection harness exercises its vendor derivation against 13 real cases — verification rather than inference.
+
+### Fixed
+
+- **`import-product-images.php` pointed at a path that no longer exists** — `C:/Users/MetaWaste/Desktop/CLAUDE/CYNTH/database/`, from before OneDrive's Known Folder Move. It would have reported "no images" rather than failing, so the staleness was invisible.
+
+- **`deploy.mjs` looked for manifest images only in the local WordPress uploads folder**, which is the wrong place for images that come from Cynth. It now prefers `products/media` beside the manifest, so a repo-only export never writes into a running install.
+
+**Tests**: 486 pass.
+
+## [0.41.1] - 2026-09-28
+
+### Fixed
+
+- **Cynth's own preview card said "Check price" for every product**, unconditionally, while the published card names the retailer. A preview that behaves differently from the thing it previews teaches the editor the wrong expectation. It now uses the same rule, from a small client-side copy of the vendor logic — deliberately duplicated rather than shared, because the two builds have no module boundary today and the cost of drift is a label in a preview, never a wrong link.
+
+## [0.41.0] - 2026-09-28
+
+### Fixed
+
+- **Every product button on the site read "Check price" instead of naming the shop.** Nothing was wrong on the site: its shortcode maps `vendor="amazon"` to "Shop on Amazon" and falls back to a neutral label for a retailer it cannot name, which is correct in both directions. **Cynth never sent a vendor.** The `products.vendor` column existed, the card renderer read it, and a comment there claimed the value was "derived from a URL host" — but nothing had ever written to it. All 22 rows were NULL, so no card carried the attribute and every button took the fallback.
+
+  The retailer is now read from the host of the affiliate URL, which is the one authoritative statement of where a reader is being sent. The URL is parsed and nothing else — not rewritten, not canonicalised, not appended to. A host that identifies no shop (a shortener, an affiliate network, an IP) yields nothing and the card carries no vendor, because a wrong shop name on an affiliate button is worse than a neutral one.
+
+### Added
+
+- **Cards name any retailer, not just the ones the site knows.** Two attributes go out: `vendor`, the slug the site's map is keyed by, which brings the retailer's styling; and `cta`, the exact wording — *Shop on Argos* — so a shop the site has never heard of is still named on the button without anybody editing a map first. Display names come from the domain, with a short correction map for the ones title-casing gets wrong (Best Buy, eBay, AliExpress, B&H Photo, John Lewis).
+
+- **The site derives the vendor too, for articles already published.** New pushes carry the attributes; already-published articles cannot, because their shortcodes predate the fix and Cynth refuses to rewrite the body of a published post. `efd-site.php` now falls back to the host of the `url` attribute it already receives, so live cards start naming their shop with nothing re-pushed. **This file needs uploading to Hostinger** — until then the live buttons are unchanged.
+
+- **Startup backfill.** 21 of 22 products filled; the one with no affiliate link correctly stays null.
+
+**Tests**: 486 pass, 9 new. One test was restated rather than deleted — it asserted that a null vendor produces no attribute, which was the defect itself.
+
+## [0.40.1] - 2026-09-27
+
+### Fixed
+
+- **Generating again destroyed the previous candidate.** Asked to see the earlier suggestion for an article to compare the two, it no longer existed anywhere on disk — `generateFeaturedImages` deleted the last batch before writing the new one. That was right when a batch meant three renderings of one idea, and wrong the moment each generation became a deliberate, paid attempt at a *different* idea, which is exactly what the new free-preview loop encourages. Exactly one batch back is now kept and shown as **Previous suggestion**, with its own *Use this one instead*. A kept image is selectable, so preferring the earlier idea costs nothing; *Discard all* takes it too, because discarding should mean discarding.
+
+**Tests**: 477 pass, 2 new.
+
+## [0.40.0] - 2026-09-27
+
+### Fixed
+
+- **The art director was photographing the topic, not the argument.** Reported after three paid generations for an article about three years of subscription fees and what stops working when you cancel. Sampled three more times through the free preview, it returned the same picture each time: *a pet feeder beside a ceramic bowl, a phone face-down*. Nothing random about it — there is no object that means "thirty-six monthly payments", and a director told to choose one real physical scene can only point at the nearest thing. Retrying could never have fixed it.
+
+  It is now told what to do when an argument has no physical form — a cost mounting, two options compared, a service that degrades — which is to show the **consequence**: the moment it reaches a person or an animal, the waiting, the going-without. Plus the tell: *if you find yourself placing the subject on a table because nothing else comes to mind, you are photographing the topic rather than the argument.* Re-sampled afterwards, all three scenes found the article's own strongest line — "a feeder going dark is a dog who didn't eat" — and put the dog in frame.
+
+- **The publication had developed its own cliché.** Across eight articles in one day: a backpack on a kitchen table, a wristband on a nightstand, powder on a counter, a feeder on a counter, a tracker on a counter. Each defensible alone; together, one photograph printed five times. Now named in the banned list.
+
+### Added
+
+- **Suggest a scene (free), then draw the one you chose.** `GET /prompt` and `POST /generate` each ran the director, so the scene an editor read was never the scene drawn — which is what made "try again" a four-cent lottery. Generation now accepts a `scene`, and given one the director does not run at all. The panel offers **Suggest a scene (free)**, **Draw this scene** and **Suggest another**: ask as many times as you like for nothing, pay once for the one you picked. The printed-text check still runs on a supplied scene — skipping the director must not skip the guard.
+
+**Cost**: $0.08 for two images. **Tests**: 475 pass, 3 new.
+
+## [0.39.1] - 2026-09-26
+
+### Fixed
+
+- **Marking an article published removed it from Cynth.** Reported as an article that "isn't present on CYNTH" — it was there the whole time: 9,514 characters, written on 2026-09-14, with a featured image attached. `DraftsPage` is the only page that lists articles and it asked for `status: 'draft'` and nothing else, so with exactly two statuses in the system, publishing an article made it unreachable except by typing its URL. The page now offers **Drafts / Published / All** and is titled Articles; the server already supported the filter.
+
+**Not a bug**: a published post that went back to draft on the live site did so because it was switched to Draft in WordPress, not by Cynth. The push history shows Cynth refusing the update first (`remote_post_published`), which is the guard working — it has no publish or unpublish operation at all.
+
+**Not a bug**: a title reading `Â£300â€"Â£600` through `curl` is clean UTF-8 in the database (`£` U+00A3, `–` U+2013). Terminal encoding, checked by codepoint before reporting.
+
+## [0.39.0] - 2026-09-25
+
+### Added
+
+- **A featured image can now be sent to an article already published.** Reported as "there's no image for the laptop ergonomics article" — and in Cynth there plainly was one. On the live site, `featured_media: 0`. Nothing was broken: the article was pushed, the image was chosen afterwards, and **there was no path**. Every write the WordPress connector makes to a post restates `status: draft`, the invariant the module is built around, so a published article could only have been given its picture by being unpublished first. Four live posts were in that state — three with no image, two still carrying pre-Milestone-40 images including the floating brain.
+
+  `pushFeaturedImage()` follows `pushSeoMetadata()` exactly, for the same reason: **a featured image is not the article's content** — it changes no word a reader reads. It uploads the file, points `featured_media` at it, and sends **no status at all**, which is precisely what makes it safe: WordPress then leaves the post's own status alone. A test asserts that no status, title, body, slug, excerpt or author is ever sent on this path. A *Send this image to the site* button sits under the attached image.
+
+- **Illustration mode.** `style` is now `photograph` (default) or `illustration`, with a switch on the Featured Image panel. Illustration swaps the camera clause for a drawing clause and tells the director that thought bubbles, cutaways and comparisons are available — the things a camera cannot photograph.
+
+### Fixed
+
+- **The director was quietly overruling the editor.** Asked for a person with a thought bubble above their head, it produced "their gaze raised toward a band resting on the windowsill" — its own preference for the photographable, over the instruction it was given. The steer is now stated as binding, and a test asserts it reaches the prompt with that wording.
+
+- **An empty answer from the director cost four cents.** The free model returned an empty body, the director threw, and the article fell through to the deterministic fallback — which spent $0.04 on "a quiet environmental photograph suggesting the setting of…", with "no people in focus" contradicting the editor's request for a person. Retrying costs nothing, so it now retries, and falls back only if three attempts come back empty.
+
+- **The WordPress test harness asserted the wrong invariant.** Its fake server demanded `status === 'draft'` on every post write, which would have rejected the metadata-only paths for doing the one thing that makes them safe. The rule is that Cynth never writes a status *other than* draft, and may write none.
+
+**Correction**: an earlier note here claimed a photograph cannot carry a thought bubble. It can — a photo-illustration with a drawn bubble is ordinary editorial practice. Both styles now produce that composition; illustration mode is for ideas with no physical referent at all.
+
+**Cost**: $0.12 for three images. **Tests**: 472 pass, 6 new.
+
+## [0.38.1] - 2026-09-25
+
+### Fixed
+
+- **Twelve real images found five faults the prompt review could not.** Milestone 40 shipped with "no image has been generated with the new prompt yet" as a stated limitation. Generating them produced: gibberish lettering on book spines (a scene built from text-bearing objects, which `NO_TEXT` cannot save); "a thin silver ring" drawn twice as a **wedding band on a pillow beside a sleeping person**, which as a photograph is an article about a marriage ending; then, after the fix for that, a studio-lit smartwatch beside a phone on a bare nightstand — no logo, and unmistakably one company's hardware shot the way that company shoots it; and an appliance with the **invented brand name "Smatter"** printed on it beside half a frame of mirrored gibberish.
+
+  Four new director rules follow, each from one of those images: lettering may not face the camera; name an object by its shape and material, not only its category, because an image model draws the most common thing a word can mean; a device may appear but never as the display piece — *if the frame would work as a shop listing, it is the wrong frame*; and hands stay simple, never mid-fine-manipulation, after "two hands, one calloused, one clean, reaching as if unclipping it" produced two arms belonging to nobody.
+
+- **The no-lettering rule is now a check, not a hope.** The "printed subscription sheet" scene came from a director that had been told twice, in the same prompt, not to put lettering in frame. `findTextRisk()` now reads the chosen scene for words that carry print and asks the director again — naming the exact phrase it wrote — up to three times, **before any image is paid for**. Asking again is free; the image is four cents. The word list is deliberately short, because a check that rejects good scenes costs a good photograph every time and is invisible when it does: bare `sheet` is excluded (it would reject a bedroom scene every time), `paper` is included except for towels, bags, clips, cups and napkins. If all three attempts still carry print, the scene is used and the brief carries a `concern`, so a garbled image is traceable rather than mysterious.
+
+- **"Worn" was compounding into squalor.** Grimy tiles, peeling laminate, stained pillowcases, sediment in a water bottle. The camera clause said "slightly imperfect", meaning unstyled, and got unclean; the director was told a *worn* thing on a kitchen table says more than a studio composition, and took it literally. The clause now reads "everyday wear — clean, not styled", the director is told lived-in means used and not neglected, and the word "worn" is no longer suggested to it.
+
+### Changed
+
+- **Featured images now default to one candidate, not three.** Seedream 4.5 returns a single image per request whatever `n` says, so the old default promised a choice the provider never delivered — and now that the director chooses the scene, extra candidates are the same scene redrawn rather than competing ideas. On a provider that does honour `n`, three would be three charges for three near-identical photographs. The control still offers up to four, and the panel now says that some models return one image however many you ask for.
+
+- **The cost confirmation names the number actually drawn.** It read `MAX_CANDIDATES`, so an unspecified count asked the editor to approve four images and then drew one.
+
+**Cost**: $0.48 for twelve images at $0.04. **Tests**: 466 pass, 4 new.
+
+## [0.38.0] - 2026-09-25
+
+### Fixed
+
+- **Featured images were generated by asking a diffusion model to make an editorial decision.** The prompt was a specification document — headed sections, a style list, a block of HARD RULES — handed to an image model. Three faults followed, all visible in the output: diffusion models weight tokens rather than parsing documents, so half the prompt diluted the subject; the prohibitions were **negations** ("do not depict any product, brand, logo, packaging or trademark") aimed at the one component with no reliable NOT operator and no negative-prompt parameter; and nothing decided what to *draw*, leaving "evoke the subject" to a model that resolves it with the nearest cliché.
+
+  The results: **"Creatine for Cognition" produced a floating brain dissolving into blue particles**, and **"How to Make a Laptop Workspace Ergonomic Without Spending Much" produced a premium standing desk with an external monitor and an ergonomic chair** — technically clean, and the exact opposite of an article about spending nothing. The article's content never reached the prompt at all, only its title and theme, which is why it could not know.
+
+  **The fix is a two-stage pipeline.** A new `image_direction` stage has a *text* model read the article and choose one concrete scene; the image model photographs that scene and is never asked to interpret anything. The director is told the image must agree with what the article *argues*, not just its topic, and is given eight clichés **by name** — a generic "avoid clichés" does nothing, because the model does not know which ones it reaches for.
+
+  **The constraints were not relaxed; they moved to a stage that can honour them.** "Do not name a real product" is trivial for a language model and nearly meaningless to a diffusion model, so the image model now receives no prohibition list at all — a test asserts it has not come back. One negative clause is kept: *no text*, because unlike a brand it cannot be prevented upstream — a scene can be entirely text-free and the model will still invent a sign.
+
+- **The spend gate now runs before the director.** Choosing a scene is a model call, so building the prompt first meant a refused image generation had still sent a request — breaking the guarantee that a refusal costs nothing and contacts nobody. Caught by an existing test.
+
+**What it produces now**: the laptop article gets *"a laptop propped open on a stack of old paperbacks, elbows lifted off the table edge, a worn cushion behind someone's lower back"* — the article's own central recommendation. The litter-box guide gets *"a gray cat sits rigidly beside an automatic litter box, half in and half out… watching the unit with still, cautious eyes, not approaching"* — its actual argument, not a product beauty shot.
+
+**Cost: nothing.** The director runs on the same free model as the search metadata.
+
+### Verified by generating, which found one more defect
+
+Two images were generated on Seedream 4.5 at $0.04 each. The first was a large improvement — a laptop raised on a stack of books on a worn kitchen table, the article's own recommendation, where the old image showed a premium standing desk — but the book spines faced the camera and the model rendered **gibberish lettering** on every one. That proved the `NO_TEXT` clause cannot work alone: telling an image model "no text" cannot save a scene built from objects whose identity *is* printed lettering. The director now carries the rule instead — books, packaging, labels and screens only where no lettering faces the camera, and a scene that only works with its lettering visible must be replaced.
+
+The second generation confirmed the fix: same scene reframed with the book page-edges to camera, no lettering anywhere, and — unprompted — a separate external keyboard at the lower height with hands on it, which is the article's *second* argument. One image stating both halves of its advice.
+
+**Also found**: Seedream returns one image per request regardless of `n`. A request for two produced one, billed as one.
+
+**Tests**: 4 rewritten, 3 new, 462 total. The rewrites were necessary — three tests asserted the negation list was *in* the image prompt, which was the defect. They now assert the opposite, and that the constraints are present in the director's prompt instead.
+
+## [0.37.0] - 2026-09-23
+
+### Changed
+
+- **The meta-description backfill became a search-metadata backfill, writing both fields in one call.** Adding a separate SEO-title backfill would have meant two near-identical services and two model calls per article for two facts derived from one reading of it. They are the same job — how an article presents itself on a results page — and writing them together is not only cheaper, it is the only way the title and description are guaranteed to agree rather than being written blind of one another.
+
+  `writeSearchMetadata` asks only for what is missing, asks for an SEO title **only when the editorial headline exceeds the SERP limit** (below it the article title does the job and a second field is maintenance for nothing), refuses an article that needs neither, and **discards an over-long SEO title rather than truncating it** — the field exists because the headline is too long, so a truncated one defeats its own purpose.
+
+### Added
+
+- **Two buttons on the SEO panel**: *Write missing search metadata* and *Push SEO metadata to WordPress*. Their own row, because analysis only reports while these two write and send. Both features existed as API-only after Milestone 38.
+
+### Run against the live data
+
+**SEO titles**: 7 of 8 written first pass, every one 50-57 characters; the eighth failed because the model returned a title over the limit, which was correctly discarded rather than stored — a retry produced a good one. 8 of 8 now.
+
+**Pushed to the live site**: 6 of 6, **five of them published posts** — the case the content-push path could never serve. Verified by reading the post meta back authenticated: every post carries both `rank_math_title` and `rank_math_description` and kept its published state.
+
+### Also: the focus keyword backfilled for free
+
+The Milestone 38 fix filled `article_seo.target_query` for new articles only, leaving the eight existing ones with nothing for Rank Math to grade. No model call was needed — the keyword stage had already written a `primary_keyword` for every one into the `keywords` table; the two tables simply never spoke. Copying it across under the same "fill a blank, never replace a decision" rule filled 8 and left 1 alone. All six live posts re-pushed and verified: **6 of 6 now carry title, description and focus keyword.**
+
+**Tests**: 3 new, 460 total.
+
+## [0.36.0] - 2026-09-23
+
+### Added
+
+- **The writer now produces an SEO title.** Measured on the nine real articles, **eight had titles longer than the ~60 characters a search result shows** — the longest was 100 — so eight of nine were being cut off mid-word in search. The editorial title is the H1 and can take the space it needs to be precise; the SEO title has 60 characters to earn a click. Two rules keep it honest: an over-long one is **discarded rather than truncated** (Cynth already falls back to the article title, so a bad SERP title is worse than none), and one identical to the headline is discarded too.
+
+- **The pipeline fills the SEO target query, so Rank Math has a focus keyword to grade.** Rank Math scores a post against its focus keyword, which Cynth sends from `article_seo.target_query` — and **eight of nine articles had that NULL**, so Cynth sent none and there was nothing to grade. The cause was two features that never spoke: the keyword stage writes to the `keywords` table, the SEO engine reads `article_seo`, and nothing bridged them. The pipeline now fills target query, secondary keywords, semantic topics and audience from what the keyword stage already decided — free, and never over the top of a target query an editor set.
+
+- **`pushSeoMetadata()` — metadata-only push, allowed on published posts.** Cynth refuses to modify published content, rightly, but that made SEO metadata useless on the articles that matter: five of six live articles were already published. A meta description is not content — no reader sees it on the page — so this path writes it without touching the article or its published state. Narrow by construction: the connector's `updateSeoMetadata()` builds a body containing `meta` and nothing else, so no code path in it can send a title, body, excerpt, slug or status. `POST /articles/:id/cms/push-seo`.
+
+  **Proven live on both kinds of post**: 346 (draft) and 344 (**published**, still published afterwards, body unchanged at 3,545 words).
+
+### Decided: the canonical URL stays empty
+
+Asked to do what is best technically, and here that is nothing. For an ordinary post on one site the canonical is the post's own permalink, which Rank Math emits automatically. Writing one from Cynth would at best duplicate that, and at worst cause real harm — a wrong canonical tells Google to index a different page instead, which can remove the page from search entirely. It is worth setting only for syndicated content, which is a publishing-strategy judgement rather than something derivable from an article record.
+
+### Not a bug: the HTML encoding worry
+
+I flagged possible mojibake (`â€"`) in pushed content. Checked at byte level: the database holds 138 real em dashes and zero mojibake sequences, and the live page decodes as clean UTF-8 with 24 em dashes and zero mojibake. **The mangling was in my own terminal display, not in the content.**
+
+### Worth knowing: Hostinger caches the rendered page
+
+After a successful metadata write to post 344, the stored value was correct (verified by reading it back authenticated) while the public page still served the OLD description — `hcdn` serving cached HTML, which a `?nocache=` query string did not bypass. Verify this work by reading post meta over the REST API, not by scraping the rendered page, or a correct write looks like a failure.
+
+**Tests**: 4 new, 457 total.
+
+## [0.35.0] - 2026-09-23
+
+### Added
+
+- **Rank Math integration.** `cms/seoAdapter.ts` held a deliberately empty mapping registry from Milestone 14; it now maps Cynth's metadata onto Rank Math's four post-meta keys (`rank_math_description`, `rank_math_title`, `rank_math_canonical_url`, `rank_math_focus_keyword`). Only non-empty values are emitted — an empty string would overwrite something a human wrote in Rank Math's own editor. Which mapping applies is configuration, not assumption: a new `cms_connections.seo_target` column names the plugin per connection, and a null or unrecognised target selects no mapping and sends no plugin fields, exactly as before. A typo degrades to "no SEO fields", never to wrong ones.
+
+  **Worth knowing what Rank Math was already doing:** a live post already showed a meta description — which was *Cynth's excerpt, verbatim*, via Rank Math's default `%excerpt%` template. So this does not add a description where none existed; it replaces a listing blurb with copy written for a results page.
+
+- **A meta-description backfill, on a free model.** A new `meta_description` model purpose that reads a finished article and writes one description. It routes through the Model Router, passes the same spend gate, and **never overwrites a description that exists** — which is what makes running it over everything safe. Run over all nine existing articles: **9 written, 0 failed, no cost**, every one between 127 and 159 characters.
+
+- **`docs/rank-math-rest-meta.php`** — the mu-plugin the WordPress side needs. Rank Math does not register its meta keys with `show_in_rest` (verified: `GET /wp-json/wp/v2/posts?_fields=meta` returns only `footnotes`), and **WordPress silently drops unregistered meta keys** — a push that looks like it worked and changed nothing. The file registers only the four keys Cynth writes, requires `edit_post` to write them, and reads or changes nothing. Until it is installed, the mapping produces fields WordPress ignores.
+
+### Fixed
+
+- **Meta descriptions were cut mid-word at the character limit.** The cleaner ended in a hard `slice(0, 160)`, producing *"…when the tracking itself becomes count"* — broken rather than shortened. It now prefers the last complete sentence that fits, falls back to the last whole word, and strips a dangling comma or hanging conjunction. The three affected descriptions were cleared and rewritten.
+
+### A decision recorded: the free model is NOT the default for new articles
+
+The writer already produces a meta description for nothing — one more field in a call already being made — and it has just read the whole article, where the backfill model sees the title, excerpt and first 700 words. A separate pass adds another request, timeout and rate limit to replace something that already works, and free models here have a record of returning empty. The right shape is the one built: **the writer produces it by default; the free-model pass repairs anything that lacks one.**
+
+**Tests**: 5 new, 453 total. One existing test was rewritten rather than deleted — it asserted the mapping registry was empty, which was correct while no stack had been chosen; the guarantee it protected is now stated directly instead.
+
+## [0.34.0] - 2026-09-23
+
+### Added
+
+- **Every generated article now writes its own meta description.** `article_seo.meta_description` was previously reachable only by typing it into the SEO screen by hand — no stage wrote one, and it was NULL on all nine generated articles in the live database. The writer now produces it, because the writer is the only stage that has read the finished article and because it costs nothing: one more field in a call that already happens. The prompt is explicit that it is not the excerpt reworded — the excerpt is a listing blurb for someone already on the site, a meta description has to earn a click from a results page. Two rules hold it honest: nothing invents one downstream (an omitted description stays empty rather than being fabricated), and **a human-written description is never overwritten** by a regenerate or a revision.
+
+### Fixed
+
+- **A pipeline-generated article had no slug until the server restarted.** `refreshSlug()` is correctly called by the manual generation path, but the pipeline's own `saveArticle()` wrote the title without it — so the only thing that ever assigned a slug to a pipeline article was the startup "articles that predate slug support" backfill. That masked the bug on older articles and left the newest one with a perfect title and `slug = NULL`, which is what the ranking check reported. `saveArticle()` now refreshes the slug, so it exists the moment the article has a title. (The slug is the URL handle — `everyfivedays.com/automatic-litter-box-buyers-guide/`. Without one, WordPress invents its own and the URL is decided by the CMS rather than the editor.)
+
+### Known gap — the push, which is not a Cynth limitation
+
+**Cynth cannot yet send a meta description to WordPress.** WordPress core has nowhere to store one; it lives in whichever SEO plugin the site runs, under that plugin's own post-meta keys, and Yoast, Rank Math, SEOPress and AIOSEO all differ. `cms/seoAdapter.ts` has held a deliberately empty mapping registry since Milestone 14 for this reason.
+
+Checked against the live site: `everyfivedays.com/wp-json/` lists **no SEO plugin namespace** (only oembed, novamira, duplicator, elementor, image-optimizer and xpro), and the homepage head contains **no `<meta name="description">` and no `og:description`** at all. The site publishes no meta descriptions from any source today. Cynth now has the text; there is nowhere on the site to put it until a plugin is chosen — at which point the work is one `SeoFieldMapping` and nothing else in Cynth changes.
+
+**Tests**: 3 new, 448 total. The first asserts the meta description is *not* equal to the excerpt, which is the failure this would most likely regress into.
+
+## [0.33.0] - 2026-09-13
+
+### Fixed
+
+- **The writer was given only the short product description, never the long one.** `generationContext.service.ts` resolved the two fields as `shortDescription ?? description`, so a product with both — the normal case, since research fills both — sent the short one and silently discarded the full one. Measured on the four products of the live litter-box article, the writer received **991 characters of description and lost 3,431**: roughly four and a half times more than it got. The long description is where the specifics live — capacities, materials, dimensions, compatibility — which is exactly the detail that separates a useful product paragraph from a vague one.
+
+  The two fields are now carried apart, because they are not two versions of the same text: `shortDescription` is the editor's summary line written for a card, `description` is the full detail. Both writer prompts (pipeline and the manual wizard) receive both, labelled `Summary:` and `Full description:`. The published card and the preview card both resolve `useCase ?? shortDescription ?? description` — a card wants the short text, and falling back to the long one would drop a wall of manufacturer copy into the middle of an article. The long description is not repeated under two labels when no short one exists, and the "nothing is recorded about this product" guard now considers both fields, so a product described at length in one field only is no longer labelled unknown.
+
+  **Framing was added with the data.** A long description is usually the manufacturer's marketing copy — simultaneously the richest source of specifics and the most likely thing to drag advertising language into the article. The prompt now states that the description fields are source material rather than copy to reuse: take the specifics and state them in your own voice, never echo the phrasing or superlatives, and either attribute an unverifiable claim to the manufacturer or leave it out. Same principle as the affiliate URL rule — take the useful part of a retailer's data, explicitly refuse the part that would compromise the article.
+
+**Cost**: about 850 extra input tokens for a four-product article, under $0.005, for 4.5x the product detail.
+
+**Tests**: 3 new, 445 total. The first asserts on specifics that exist only in the long description (`210D ripstop`, `Rated to 18 kg`) rather than on the field label, so the test fails if the text stops arriving even when the heading remains.
+
 ## [0.32.0] - 2026-09-08
 
 ### Added

@@ -20,6 +20,8 @@ export interface CmsConnectionDto {
   description: string | null;
   /** The site root. Configurable, never hardcoded — the same connection works for a local and a live site. */
   baseUrl: string;
+  /** Which SEO plugin this site runs, e.g. 'rankmath'. Null means none chosen. */
+  seoTarget: string | null;
   authMethod: string;
   username: string | null;
   /** The env var NAME holding the credential. Not a secret; the value never leaves the server. */
@@ -45,6 +47,7 @@ function mapConnection(row: CmsConnectionRow): CmsConnectionDto {
     connectorType: row.connector_type,
     description: row.description,
     baseUrl: row.base_url,
+    seoTarget: (row as any).seo_target ?? null,
     authMethod: row.auth_method,
     username: row.username,
     credentialEnvVar: row.credential_env_var,
@@ -117,10 +120,18 @@ export function createConnection(input: CmsConnectionInput): CmsConnectionDto {
   const db = getDatabase();
   const result = db
     .prepare(`
-      INSERT INTO cms_connections (name, connector_type, description, base_url, auth_method, username, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO cms_connections (name, connector_type, description, base_url, seo_target, auth_method, username, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
     `)
-    .run(input.name, input.connectorType, input.description, input.baseUrl, input.authMethod, input.username);
+    .run(
+      input.name,
+      input.connectorType,
+      input.description,
+      input.baseUrl,
+      input.seoTarget ?? null,
+      input.authMethod,
+      input.username,
+    );
 
   const connectionId = Number(result.lastInsertRowid);
   const envVar = applyCredential(connectionId, input.credential, null);
@@ -147,7 +158,7 @@ export function updateConnection(id: number, input: CmsConnectionInput): CmsConn
 
   db.prepare(`
     UPDATE cms_connections SET
-      name = ?, connector_type = ?, description = ?, base_url = ?, auth_method = ?,
+      name = ?, connector_type = ?, description = ?, base_url = ?, seo_target = ?, auth_method = ?,
       username = ?, credential_env_var = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
@@ -155,6 +166,7 @@ export function updateConnection(id: number, input: CmsConnectionInput): CmsConn
     input.connectorType,
     input.description,
     input.baseUrl,
+    input.seoTarget ?? null,
     input.authMethod,
     input.username,
     envVar,

@@ -15,8 +15,16 @@ import { buildGenerationContext } from '../generation/generationContext.service.
 import { listGenerationHistoryForArticle } from '../generation/generationHistory.repository.js';
 import { isValidArticleStatus, ARTICLE_STATUSES } from './articles.constants.js';
 import { getProjectById, getThemeById, getTopicById, listThemesForAuthor } from '../content/content.repository.js';
-import { getPushPreflight, isValidPushMode, pushArticle, refreshLink } from '../cms/cmsPublish.service.js';
+import {
+  getPushPreflight,
+  isValidPushMode,
+  pushArticle,
+  pushFeaturedImage,
+  pushSeoMetadata,
+  refreshLink,
+} from '../cms/cmsPublish.service.js';
 import { listPushHistoryForArticle } from '../cms/cmsLinks.repository.js';
+import { listArticlesByArea } from './articlesByArea.service.js';
 import { isCmsError } from '../cms/cms.errors.js';
 
 export const articlesRouter = Router();
@@ -102,6 +110,17 @@ articlesRouter.get('/', (req, res) => {
 
   const articles = repo.listArticles({ status, limit });
   res.json({ articles, total: articles.length });
+});
+
+/**
+ * The catalogue grouped by thematic area.
+ *
+ * DECLARED BEFORE `/:id` ON PURPOSE. Express matches in order, so registering
+ * this after the id route would hand "by-area" to it as an id and answer 400
+ * for a path that is plainly not a number.
+ */
+articlesRouter.get('/by-area', (_req, res) => {
+  res.json(listArticlesByArea());
 });
 
 articlesRouter.get('/:id', (req, res) => {
@@ -393,7 +412,10 @@ articlesRouter.post('/:id/cms/push', async (req, res) => {
   const body = req.body ?? {};
   if (!isValidPushMode(body.mode)) {
     return res.status(400).json({
-      errors: ['mode must be either "create" (a new CMS draft) or "update" (an existing one).'],
+      errors: [
+        'mode must be "create" (a new CMS draft), "update" (an existing draft), ' +
+          'or "update_published" (replace an article that is already live).',
+      ],
     });
   }
 
@@ -401,7 +423,16 @@ articlesRouter.post('/:id/cms/push', async (req, res) => {
   const connectionId = Number.isInteger(rawConnectionId) && rawConnectionId > 0 ? rawConnectionId : null;
 
   try {
-    const result = await pushArticle(id, connectionId, body.mode);
+    /**
+     * Both acknowledgements must be STRICTLY true, and neither is ever
+     * defaulted — the same rule the spend gate uses, for the same reason. A
+     * missing field means the human was not asked, and a human who was not
+     * asked has not agreed to replace what readers are seeing.
+     */
+    const result = await pushArticle(id, connectionId, body.mode, {
+      confirmed: body.confirmed === true,
+      acknowledgeRemoteEdits: body.acknowledgeRemoteEdits === true,
+    });
     res.json(result);
   } catch (error) {
     respondToCmsError(res, error);
@@ -409,6 +440,48 @@ articlesRouter.post('/:id/cms/push', async (req, res) => {
 });
 
 /** Re-reads the remote post so Cynth reflects a status a human changed in the CMS. A read; writes nothing there. */
+/**
+ * Writes only the SEO metadata onto a post that already exists.
+ *
+ * Allowed on a PUBLISHED post, unlike a content push. A meta description is
+ * not content — no reader sees it on the page — and refusing to fix one on a
+ * published article would make the feature useless on exactly the articles
+ * that matter. The connector sends the mapped SEO fields and nothing else.
+ */
+articlesRouter.post('/:id/cms/push-seo', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid draft id.'] });
+
+  const connectionId = parseId(String(req.body?.connectionId ?? ''));
+  try {
+    res.json(await pushSeoMetadata(id, connectionId));
+  } catch (error) {
+    if (isCmsError(error)) return res.status(400).json({ errors: [error.message], code: error.code });
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'Unexpected error.'] });
+  }
+});
+
+/**
+ * Attaches the featured image to a post that already exists.
+ *
+ * Allowed on a PUBLISHED post for the same reason as the SEO push: an image is
+ * not the article's content. The alternative was no path at all — the ordinary
+ * update writes `status: draft`, so a live article could only have been given
+ * its picture by being unpublished first.
+ */
+articlesRouter.post('/:id/cms/push-featured-image', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid draft id.'] });
+
+  const connectionId = parseId(String(req.body?.connectionId ?? ''));
+  try {
+    res.json(await pushFeaturedImage(id, connectionId));
+  } catch (error) {
+    if (isCmsError(error)) return res.status(400).json({ errors: [error.message], code: error.code });
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'Unexpected error.'] });
+  }
+});
+
 articlesRouter.post('/:id/cms/refresh', async (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });

@@ -45,6 +45,8 @@ const authorsRepo = await import('../src/features/authors/authors.repository.js'
 const settings = await import('../src/shared/settings/settings.repository.js');
 const products = await import('../src/features/products/products.repository.js');
 const skillsRepo = await import('../src/features/authors/authorSkills.repository.js');
+const seoRepo = await import('../src/features/seo/seo.repository.js');
+const articlesRepo = await import('../src/features/articles/articles.repository.js');
 const articleProducts = await import('../src/features/articles/articleProducts.repository.js');
 
 dbModule.initializeDatabase();
@@ -198,6 +200,9 @@ function articleReply(): string {
   return JSON.stringify({
     title: 'Why Trail Runners Roll Ankles',
     excerpt: 'What happens, and what helps.',
+    meta_description:
+      'Ankle rolls on trail come from tired stabilisers, not weak ankles. What the evidence shows, and what actually helps.',
+    seo_title: 'Why Trail Runners Roll Ankles (And What Helps)',
     sections: template.contentSchema.sections.map((section) => ({
       key: section.key,
       heading: section.key,
@@ -662,13 +667,24 @@ test('RESUME: a run that has not failed is not reopened', async () => {
 
 /* ------------------------------------------------------------ products --- */
 
-function makeProduct(title: string, options: { themeId?: number | null; useCase?: string; problemSolved?: string } = {}) {
+function makeProduct(
+  title: string,
+  options: {
+    themeId?: number | null;
+    useCase?: string;
+    problemSolved?: string;
+    shortDescription?: string | null;
+    description?: string | null;
+  } = {},
+) {
   const product = products.createProduct({
     title,
     affiliateLink: `https://example.test/${encodeURIComponent(title)}`,
     themeId: options.themeId ?? null,
     useCase: options.useCase,
     problemSolved: options.problemSolved,
+    shortDescription: options.shortDescription ?? null,
+    description: options.description ?? null,
   } as never);
   return product;
 }
@@ -1370,6 +1386,282 @@ test('IDEA: exact without an idea is meaningless, and is not honoured', async ()
   });
   const { pipelineId } = started as { pipelineId: number };
   assert.equal(repo.getPipelineById(pipelineId)!.topicMode, 'explore');
+});
+
+/* ------------------------------------------------- everything known --- */
+
+test('PRODUCTS: BOTH descriptions reach the writer, not just the short one', async () => {
+  // The defect: the context resolved `shortDescription ?? description`, so a
+  // product with both -- the normal case -- sent the writer the short one and
+  // silently dropped the long one. On four real products that discarded 3,429
+  // characters, most of what was actually recorded about them.
+  const detailed = makeProduct('Summit 40 Pack', {
+    themeId: theme.id,
+    useCase: 'Carrying a weekend load on technical ground',
+    problemSolved: 'A pack that loads the shoulders instead of the hips',
+    shortDescription: 'A 40-litre pack with an alloy frame.',
+    description:
+      'The Summit 40 uses a 6061 alloy perimeter frame and a moulded hip belt available in three widths. '
+      + 'Fabric is 210D ripstop with a 420D base panel. Hydration sleeve fits a 3-litre bladder. '
+      + 'Rated to 18 kg before the frame begins to flex.',
+  });
+
+  replies = router();
+  const { pipelineId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [detailed.id] });
+
+  const before = prompts.length;
+  await orchestrator.advancePipeline(pipelineId);
+
+  const writerPrompt = prompts.slice(before).find((prompt) => prompt.includes('=== PRODUCTS AVAILABLE ==='))!;
+  assert.ok(writerPrompt, 'the writer was given a product block');
+
+  // Both, and labelled for what each one is.
+  assert.match(writerPrompt, /Summary: A 40-litre pack with an alloy frame\./);
+  assert.match(writerPrompt, /Full description: The Summit 40 uses a 6061 alloy perimeter frame/);
+
+  // The specifics that only exist in the long one -- the whole reason it
+  // matters -- actually arrive.
+  assert.match(writerPrompt, /210D ripstop/);
+  assert.match(writerPrompt, /Rated to 18 kg/);
+
+  // And the fields that already worked are untouched.
+  assert.match(writerPrompt, /What it is for: Carrying a weekend load on technical ground/);
+  assert.match(writerPrompt, /Problem it addresses: A pack that loads the shoulders instead of the hips/);
+});
+
+test('PRODUCTS: the manufacturer copy is framed as source material, not as prose to reuse', async () => {
+  // Supplying the long description without saying what it is would be the
+  // worse outcome: it is usually marketing copy, and it is the single most
+  // likely thing to drag advertising language into the article.
+  const detailed = makeProduct('Ridge 30 Pack', {
+    themeId: theme.id,
+    shortDescription: 'A 30-litre daypack.',
+    description: 'The ultimate daypack for discerning adventurers who demand uncompromising performance.',
+  });
+
+  replies = router();
+  const { pipelineId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [detailed.id] });
+
+  const before = prompts.length;
+  await orchestrator.advancePipeline(pipelineId);
+
+  const writerPrompt = prompts.slice(before).find((prompt) => prompt.includes('=== PRODUCTS AVAILABLE ==='))!;
+  assert.match(writerPrompt, /SOURCE MATERIAL, not copy to reuse/);
+  assert.match(writerPrompt, /Never echo its phrasing, its superlatives or its sales framing/);
+  assert.match(writerPrompt, /attribute it \("the manufacturer says/);
+});
+
+test('PRODUCTS: a product with only a long description is not reported as unresearched', async () => {
+  // The "nothing is recorded" guard read the collapsed field. With the two
+  // separated it has to consider both, or a product described at length in one
+  // field only would arrive labelled as unknown.
+  const longOnly = makeProduct('Cirque 55 Pack', {
+    themeId: theme.id,
+    shortDescription: null,
+    description: 'A 55-litre expedition pack with a floating lid and dual ice-axe loops.',
+  });
+
+  replies = router();
+  const { pipelineId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [longOnly.id] });
+
+  const before = prompts.length;
+  await orchestrator.advancePipeline(pipelineId);
+
+  const writerPrompt = prompts.slice(before).find((prompt) => prompt.includes('=== PRODUCTS AVAILABLE ==='))!;
+  assert.match(writerPrompt, /Full description: A 55-litre expedition pack/);
+  assert.ok(
+    !writerPrompt.includes('Nothing is recorded about what this product is for'),
+    'a product described at length is not unknown',
+  );
+  // With no short description there is nothing to summarise, and the long one
+  // is not repeated under two labels.
+  assert.ok(!writerPrompt.includes('Summary: A 55-litre expedition pack'));
+});
+
+/* ------------------------------------------- the search-result metadata --- */
+
+test('METADATA: a generated article gets a meta description and a slug', async () => {
+  // Both were missing on every article. Meta description because nothing ever
+  // wrote one -- the field was reachable only by typing it in by hand. Slug
+  // because the pipeline's own save never refreshed it, so an article had no
+  // slug until the server next restarted and a startup backfill caught it.
+  replies = router();
+  const { pipelineId, articleId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [] });
+  await orchestrator.advancePipeline(pipelineId);
+
+  const stored = articlesRepo.getArticleById(articleId)!;
+  assert.ok(stored.slug, 'the article has a slug as soon as it has a title');
+  assert.match(stored.slug!, /^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'and it is a valid slug');
+
+  const meta = seoRepo.getArticleSeo(articleId).metadata.metaDescription;
+  assert.ok(meta, 'the article carries its own search-result description');
+  assert.ok(meta!.length <= 160, 'capped at the SERP limit');
+
+  // It must not simply be the excerpt again -- they are written for different
+  // readers in different places, and returning one twice is the obvious
+  // failure mode.
+  assert.notEqual(meta, stored.generated?.excerpt ?? '', 'the meta description is not the excerpt');
+});
+
+test('METADATA: a meta description written by hand is never overwritten', async () => {
+  // An editor who has written their own search-result copy has made a
+  // decision. A revision or a regenerate must not silently replace it.
+  replies = router({ revisionRequired: true });
+  const { pipelineId, articleId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [] });
+  await orchestrator.advancePipeline(pipelineId);
+
+  const MINE = 'The description I wrote myself, which Cynth must leave alone.';
+  seoRepo.setSeoMetadataField(articleId, 'meta_description', MINE);
+
+  // Review, then take the revision -- the path that rewrites the article.
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'review', { action: 'revise' }, { accepted: false });
+  await orchestrator.advancePipeline(pipelineId);
+
+  assert.equal(
+    seoRepo.getArticleSeo(articleId).metadata.metaDescription,
+    MINE,
+    'the editor\'s own copy survived a full revision',
+  );
+});
+
+test('METADATA: the writer is told what a meta description is for', async () => {
+  // The instruction is what stops it returning the excerpt twice, so its
+  // absence is a silent quality regression rather than a visible failure.
+  replies = router();
+  const before = prompts.length;
+  const { pipelineId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [] });
+  await orchestrator.advancePipeline(pipelineId);
+
+  const writerPrompt = prompts.slice(before).find((prompt) => prompt.includes('=== TEMPLATE:'))!;
+  assert.match(writerPrompt, /"meta_description"/, 'it is in the output schema');
+  assert.match(writerPrompt, /appears under the title in search results/);
+  assert.match(writerPrompt, /NOT the excerpt reworded/);
+});
+
+/* ------------------------------------------------ SEO title & keyword --- */
+
+test('SEO TITLE: a long headline gets a short one for search results', async () => {
+  // Measured on the first nine real articles, EIGHT had titles over the ~60
+  // characters a search result shows. The editorial title is the H1 and can
+  // take the space it needs; this is the same article seen from a results
+  // page.
+  replies = router();
+  const { pipelineId, articleId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [] });
+  await orchestrator.advancePipeline(pipelineId);
+
+  const seoTitle = seoRepo.getArticleSeo(articleId).metadata.seoTitle;
+  assert.ok(seoTitle, 'a SERP title was stored');
+  assert.ok(seoTitle!.length <= 60, `"${seoTitle}" fits a search result`);
+
+  const editorial = articlesRepo.getArticleById(articleId)!.generated!.title;
+  assert.notEqual(seoTitle, editorial, 'and it is not just the headline again');
+});
+
+test('SEO TITLE: one that overruns the SERP limit is discarded, not stored', async () => {
+  // Storing it would create a second field to maintain that makes the search
+  // result no better. Cynth already falls back to the article title when this
+  // is unset, so empty is the correct answer rather than a lesser one.
+  const base = router();
+  replies = (prompt) => {
+    if (!prompt.includes('=== TEMPLATE:')) return base(prompt);
+    const article = JSON.parse(base(prompt));
+    article.seo_title = 'A search-result title far too long to survive truncation in any results page anywhere';
+    return JSON.stringify(article);
+  };
+
+  const { pipelineId, articleId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'products', { productIds: [] });
+  await orchestrator.advancePipeline(pipelineId);
+
+  assert.equal(
+    seoRepo.getArticleSeo(articleId).metadata.seoTitle ?? null,
+    null,
+    'an over-long SERP title is not stored at all',
+  );
+});
+
+test('SEO KEYWORD: the pipeline fills the SEO target query it used to leave blank', async () => {
+  // Rank Math grades a post against its focus keyword, which Cynth sends from
+  // the SEO target query. Nothing was filling it, so Cynth sent none and
+  // there was nothing to grade. The keyword stage has already decided this.
+  replies = router();
+  const { pipelineId, articleId } = startGuided();
+  for (const kind of ['topic', 'keywords_title'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+
+  const config = seoRepo.getArticleSeo(articleId).configuration;
+  assert.equal(config.targetQuery, 'trail running ankle injuries', 'taken from the chosen keyword plan');
+  assert.ok(config.secondaryKeywords.length > 0, 'and the secondary keywords came with it');
+});
+
+test('SEO KEYWORD: a target query the editor set is never overwritten', async () => {
+  // Choosing what an article competes for is an editorial decision, and a
+  // rerun must not quietly change it.
+  replies = router();
+  const { pipelineId, articleId } = startGuided();
+  await orchestrator.advancePipeline(pipelineId);
+
+  const MINE = 'the query I chose myself';
+  const current = seoRepo.getArticleSeo(articleId).configuration;
+  seoRepo.saveSeoConfiguration(articleId, { ...current, targetQuery: MINE });
+
+  orchestrator.decide(pipelineId, 'topic', decisionFor('topic'), { accepted: true });
+  await orchestrator.advancePipeline(pipelineId);
+  orchestrator.decide(pipelineId, 'keywords_title', decisionFor('keywords_title'), { accepted: true });
+  await orchestrator.advancePipeline(pipelineId);
+
+  assert.equal(seoRepo.getArticleSeo(articleId).configuration.targetQuery, MINE);
 });
 
 test.after(() => {

@@ -1,4 +1,5 @@
 import type { ArticleProductContext } from '../generation/generationContext.service.js';
+import { resolveVendor } from '../products/vendor.service.js';
 
 /**
  * The product card (Milestone 17; re-cut as a shortcode, 2026-09-08).
@@ -101,24 +102,29 @@ function safeUrl(url: string | null): string | null {
 }
 
 /**
- * The retailer slug the site uses to label the button.
+ * THE RETAILER THE BUTTON NAMES.
  *
- * Normalised to a bare lowercase token because `products.vendor` is derived
- * from a URL host and may arrive as `amazon`, `Amazon`, or `www.amazon.com`.
- * An unrecognised value is still passed through: the site keeps its own vendor
- * map, and a vendor Cynth has never heard of should reach it rather than be
- * silently dropped here.
+ * This comment used to claim `products.vendor` was "derived from a URL host".
+ * It was not derived from anything: no code had ever written to that column,
+ * every row was NULL, so no `vendor=` attribute was emitted and every card on
+ * the site read the neutral fallback — "Check price" — instead of "Shop on
+ * Amazon".
+ *
+ * Resolution now falls back to the affiliate URL, so a product saved before
+ * the column was populated still names its shop. A host that identifies no
+ * retailer yields nothing and the card carries no vendor, which is the honest
+ * outcome rather than a wrong one.
+ *
+ * Two attributes go out, and they do different jobs:
+ *
+ *   `vendor` is the slug the site's own map is keyed by. A match there brings
+ *   the retailer's styling as well as its label, which Cynth cannot supply.
+ *
+ *   `cta` is the exact wording — "Shop on Argos" — so a retailer the site has
+ *   never heard of is still named correctly on the button. Without it, adding
+ *   a new shop would mean editing the site's map before any reader could see
+ *   where a link goes.
  */
-function vendorSlug(vendor: string | null): string {
-  if (!vendor) return '';
-  const bare = vendor
-    .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/^www\./, '')
-    .replace(/\..*$/, '')
-    .replace(/[^a-z0-9_-]/g, '');
-  return bare;
-}
 
 export function renderProductCard(product: ArticleProductContext): string {
   const href = safeUrl(product.affiliateUrl);
@@ -139,8 +145,11 @@ export function renderProductCard(product: ArticleProductContext): string {
   const brand = attr(product.brand);
   if (brand) parts.push(`brand="${brand}"`);
 
-  const vendor = vendorSlug(product.vendor);
-  if (vendor) parts.push(`vendor="${vendor}"`);
+  const vendor = resolveVendor(product.vendor, product.affiliateUrl);
+  if (vendor) {
+    parts.push(`vendor="${vendor.slug}"`);
+    parts.push(`cta="Shop on ${attr(vendor.label)}"`);
+  }
 
   if (image) parts.push(`image="${attr(image)}"`);
   if (href) parts.push(`url="${attr(href)}"`);

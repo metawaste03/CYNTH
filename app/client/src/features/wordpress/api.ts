@@ -108,8 +108,24 @@ export function fetchPushPreflight(articleId: number, connectionId?: number | nu
  * whether this creates a new post or updates an existing one, and the server
  * refuses if that no longer matches reality. Nothing here can publish.
  */
-export function pushArticle(articleId: number, mode: PushMode, connectionId?: number | null): Promise<PushResult> {
-  return api.post<PushResult>(`/articles/${articleId}/cms/push`, { mode, connectionId: connectionId ?? null });
+/**
+ * `confirmed` and `acknowledgeRemoteEdits` matter only for
+ * `update_published`, and the server treats anything but a literal `true` as
+ * a no — so an older caller that omits them cannot replace a live article by
+ * accident.
+ */
+export function pushArticle(
+  articleId: number,
+  mode: PushMode,
+  connectionId?: number | null,
+  options: { confirmed?: boolean; acknowledgeRemoteEdits?: boolean } = {},
+): Promise<PushResult> {
+  return api.post<PushResult>(`/articles/${articleId}/cms/push`, {
+    mode,
+    connectionId: connectionId ?? null,
+    confirmed: options.confirmed === true,
+    acknowledgeRemoteEdits: options.acknowledgeRemoteEdits === true,
+  });
 }
 
 /** Re-reads the remote post so Cynth reflects a status a human changed in the CMS. */

@@ -1,4 +1,5 @@
 import { getArticleById } from '../articles/articles.repository.js';
+import { getThemeById } from '../content/content.repository.js';
 import type { ArticleDraftDto } from '../articles/articles.repository.js';
 import { UNTITLED_ARTICLE_LABEL } from '../articles/articles.constants.js';
 import { getConnector } from './connectors/index.js';
@@ -18,7 +19,7 @@ import { getFeaturedImage } from '../media/media.repository.js';
 import { MEDIA_IMAGES_DIR } from '../media/media.upload.js';
 import { articleBodyToHtml } from './articleMarkup.js';
 import { buildGenerationContext } from '../generation/generationContext.service.js';
-import { buildCmsSeoMetadata } from './seoAdapter.js';
+import { buildCmsSeoMetadata, getSeoFieldMapping } from './seoAdapter.js';
 import { evaluateSeoGate, getGateCriteria } from '../seo/seoGate.service.js';
 import { getArticleSeo, getLatestAnalysisRun, listFindingsForAnalysis } from '../seo/seo.repository.js';
 import { contentFingerprint } from '../seo/seoAnalysis.service.js';
@@ -48,15 +49,32 @@ import type { ArticleCmsLinkDto } from './cmsLinks.repository.js';
  *      place. Creating a second remote post for the same article requires the
  *      caller to say so explicitly, and is refused while a live link exists.
  *   3. NO SILENT OVERWRITES. An update states, before it runs, which post it
- *      is about to modify — and refuses outright to modify one a human has
- *      already published.
+ *      is about to modify. Modifying one a human has already published is a
+ *      separate mode that no default can reach, needs an explicit yes every
+ *      time, and refuses again if somebody edited the post in the CMS after
+ *      Cynth last sent it. It never changes the post's status or its slug, so
+ *      an update cannot unpublish an article or move its URL.
  */
 
 /** What the caller is asking for. Never inferred: the UI states which it means, and the server verifies it. */
-export type PushMode = 'create' | 'update';
+/**
+ * `update_published` is deliberately a THIRD mode, not a flag on `update`.
+ *
+ * Cynth refused to touch published content for two reasons, and only one of
+ * them was a policy. The other was mechanical: `updateDraft` sends
+ * `status: draft` unconditionally, so "updating" a live post would have
+ * unpublished it — the article gone from the site, the caller shown a success.
+ * That is fixed in the connector, which sends no status and no slug.
+ *
+ * The policy reason stands and is handled here: replacing what readers are
+ * currently seeing is an editorial act, so it needs a human to say so, every
+ * time, for that article. A separate mode means no existing call site can
+ * reach it by accident and no default can drift into it.
+ */
+export type PushMode = 'create' | 'update' | 'update_published';
 
 export function isValidPushMode(value: unknown): value is PushMode {
-  return value === 'create' || value === 'update';
+  return value === 'create' || value === 'update' || value === 'update_published';
 }
 
 /* ------------------------------------------------------------- resolution --- */
@@ -149,6 +167,8 @@ export interface ArticleMappingPreview {
   featuredImageName: string | null;
   /** Character count of the rendered body, so the user can see something real was mapped. */
   contentLength: number;
+  /** The category this will be filed under, or null when the article has no thematic area. */
+  categoryName: string | null;
 }
 
 /**
@@ -195,6 +215,14 @@ export function buildDraftPayload(article: ArticleDraftDto, connection: CmsConne
     remoteAuthorId: resolveRemoteAuthorId(article, connection),
     featuredImage: buildFeaturedImage(article.id),
     seo: buildSeoMetadata(article),
+    seoTarget: connection.seoTarget,
+    /**
+     * The thematic area, so the CMS files the article where Cynth says it
+     * belongs. Left to a human, this drifts: one article was published under
+     * Smart Pet Care when it was a Sleep & Recovery piece, which quietly kept
+     * it off its own category page and put it on somebody else's.
+     */
+    categoryName: article.themeId === null ? null : (getThemeById(article.themeId)?.name ?? null),
   };
 }
 
@@ -272,6 +300,7 @@ export function previewMapping(articleId: number, connectionId: number | null): 
     remoteAuthorName: resolveRemoteAuthorName(article, connection, payload.remoteAuthorId),
     featuredImageName: payload.featuredImage?.filename ?? null,
     contentLength: payload.content.length,
+    categoryName: payload.categoryName,
   };
 }
 
@@ -461,6 +490,11 @@ export interface PushPreflight {
   issues: string[];
   /** Set when the blocking problem is configuration, so the UI can link to settings. */
   configurationErrorCode: string | null;
+  /**
+   * True when the article is live and an update would replace what readers
+   * see. The UI uses it to ask before it sends, not after it has been refused.
+   */
+  replacesLiveArticle: boolean;
   /** Every CMS this article currently lives on. */
   links: ArticleCmsLinkDto[];
   /**
@@ -526,6 +560,7 @@ export function getPushPreflight(articleId: number, connectionId: number | null 
       remoteAuthorName: resolveRemoteAuthorName(article, connection, payload.remoteAuthorId),
       featuredImageName: payload.featuredImage?.filename ?? null,
       contentLength: payload.content.length,
+      categoryName: payload.categoryName,
     };
   }
 
@@ -541,13 +576,22 @@ export function getPushPreflight(articleId: number, connectionId: number | null 
         }
       : null,
     link,
-    // DUPLICATE PROTECTION, surfaced before the click: an article already
-    // pushed here can only be updated, and the button says so.
-    action: connection ? (link ? 'update' : 'create') : null,
+    /**
+     * DUPLICATE PROTECTION, surfaced before the click: an article already
+     * pushed here can only be updated, and the button says so.
+     *
+     * The action reads the post's LAST KNOWN status rather than asking the
+     * CMS, because a preflight must stay free and instant. It is a label, not
+     * a decision: `pushArticle` re-reads the real status over the network
+     * before it writes anything, so a stale record here can only mislabel a
+     * button, never mis-route a write.
+     */
+    action: connection ? (link ? (link.externalStatus === 'draft' ? 'update' : 'update_published') : 'create') : null,
     mapping,
     ready: issues.length === 0,
     issues,
     configurationErrorCode,
+    replacesLiveArticle: Boolean(link && link.externalStatus && link.externalStatus !== 'draft'),
     links: listLinksForArticle(articleId),
     seoGate,
     seo: article.generated?.content?.trim() ? buildSeoMetadata(article) : null,
@@ -582,10 +626,176 @@ export interface PushResult {
  * caller says "update" but nothing has been pushed, it is refused rather than
  * quietly creating one.
  */
+/**
+ * Pushes ONLY the SEO metadata for an article that is already in the CMS.
+ *
+ * WHY THIS IS ALLOWED ON A PUBLISHED POST, when a content push is not.
+ *
+ * Cynth refuses to modify published CONTENT, and that rule is right: once a
+ * human has published an article, its words are theirs. But a meta
+ * description is not content. It is not on the page, no reader sees it in the
+ * article, and getting it wrong is invisible until it costs traffic.
+ *
+ * Refusing to write it on published posts made the feature useless on exactly
+ * the articles that matter — the live ones. So this path exists, and it is
+ * narrow by construction rather than by promise: the connector sends the
+ * mapped SEO fields and nothing else, so there is no code path here that can
+ * touch a title, a body, a slug or a published state.
+ */
+export async function pushSeoMetadata(articleId: number, connectionId: number | null): Promise<SeoPushResult> {
+  const article = getArticleById(articleId);
+  if (!article) throw new CmsError('not_found', 'Article not found.');
+
+  const { connection, connector, context } = resolveTarget(connectionId);
+
+  const link = getLink(articleId, connection.id);
+  if (!link) {
+    throw new CmsError(
+      'not_pushed_yet',
+      `This article has not been pushed to ${connection.name} yet, so there is no post to attach SEO metadata to.`,
+    );
+  }
+
+  const seo = buildSeoMetadata(article);
+  if (!seo) {
+    throw new CmsError(
+      'invalid_configuration',
+      'Cynth holds no SEO metadata for this article, so there is nothing to send.',
+    );
+  }
+
+  if (!connection.seoTarget) {
+    throw new CmsError(
+      'invalid_configuration',
+      `No SEO plugin is set for ${connection.name}, so Cynth does not know which fields to write.`,
+    );
+  }
+
+  const post = await connector.updateSeoMetadata(link.externalId, seo, connection.seoTarget, context);
+  if (!post) {
+    throw new CmsError(
+      'invalid_configuration',
+      `Cynth has no field mapping for "${connection.seoTarget}", so nothing was sent.`,
+    );
+  }
+
+  refreshLinkState(link.id, post.status, post.url);
+
+  return {
+    connectionName: connection.name,
+    post,
+    // Named so the caller can say what actually travelled rather than "done".
+    fields: Object.keys(RANK_MATH_PREVIEW(seo, connection.seoTarget)),
+    message: `SEO metadata updated on post ${post.id} at ${connection.name}. The article itself was not touched.`,
+  };
+}
+
+/**
+ * Sends the featured image to an article already pushed to the CMS.
+ *
+ * Allowed on a published post, for the same reason `pushSeoMetadata` is: a
+ * featured image is not the article's content. It changes no word a reader
+ * reads, and the alternative is worse than useless — the connector's ordinary
+ * update writes `status: draft` on every call, so the only way to give a live
+ * article its picture would have been to unpublish it first.
+ *
+ * Found the plain way: an article was published, its image was chosen
+ * afterwards, and the live post simply had none. Nothing was broken; there was
+ * no path.
+ */
+export async function pushFeaturedImage(
+  articleId: number,
+  connectionId: number | null,
+): Promise<FeaturedImagePushResult> {
+  const article = getArticleById(articleId);
+  if (!article) throw new CmsError('not_found', 'Article not found.');
+
+  const { connection, connector, context } = resolveTarget(connectionId);
+
+  const link = getLink(articleId, connection.id);
+  if (!link) {
+    throw new CmsError(
+      'not_pushed_yet',
+      `This article has not been pushed to ${connection.name} yet, so there is no post to attach an image to.`,
+    );
+  }
+
+  const image = buildFeaturedImage(articleId);
+  if (!image) {
+    throw new CmsError(
+      'invalid_configuration',
+      'This article has no featured image selected in Cynth, so there is nothing to send.',
+    );
+  }
+
+  if (!connector.updateFeaturedImage) {
+    throw new CmsError(
+      'invalid_configuration',
+      `${connection.name} cannot attach an image to an existing post.`,
+    );
+  }
+
+  const post = await connector.updateFeaturedImage(link.externalId, image, context);
+  if (!post) {
+    throw new CmsError(
+      'cms_error',
+      `${connection.name} accepted the upload but did not attach it to post ${link.externalId}.`,
+    );
+  }
+
+  refreshLinkState(link.id, post.status, post.url);
+
+  return {
+    connectionName: connection.name,
+    post,
+    filename: image.filename,
+    message: `Featured image attached to post ${post.id} at ${connection.name}. The article itself was not touched.`,
+  };
+}
+
+export interface FeaturedImagePushResult {
+  connectionName: string;
+  post: CmsRemotePost;
+  filename: string;
+  message: string;
+}
+
+/** What the mapping would send, for reporting. Never used to build the request. */
+function RANK_MATH_PREVIEW(seo: CmsSeoMetadata, target: string): Record<string, unknown> {
+  const mapping = getSeoFieldMapping('wordpress', target);
+  return mapping ? mapping.map(seo) : {};
+}
+
+export interface SeoPushResult {
+  connectionName: string;
+  post: CmsRemotePost;
+  fields: string[];
+  message: string;
+}
+
+/**
+ * Was the post changed on the site after Cynth last sent it?
+ *
+ * Both timestamps are UTC, so this is a plain comparison. A missing timestamp
+ * on either side answers "assume it was": not knowing is not the same as
+ * knowing it was untouched, and the safe reading of an unknown is the one that
+ * asks the human.
+ */
+function remoteEditedSincePush(remote: CmsRemotePost, link: ArticleCmsLinkDto): boolean {
+  if (!remote.modifiedAt || !link.lastPushedAt) return true;
+  const pushed = Date.parse(link.lastPushedAt.replace(' ', 'T') + 'Z');
+  const modified = Date.parse(remote.modifiedAt);
+  if (Number.isNaN(pushed) || Number.isNaN(modified)) return true;
+  // A minute of slack: WordPress records `modified` when it processes Cynth's
+  // own write, so an exact comparison would flag every push as a remote edit.
+  return modified > pushed + 60_000;
+}
+
 export async function pushArticle(
   articleId: number,
   connectionId: number | null,
   mode: PushMode,
+  options: { confirmed?: boolean; acknowledgeRemoteEdits?: boolean } = {},
 ): Promise<PushResult> {
   const article = getArticleById(articleId);
   if (!article) throw new CmsError('not_found', 'Article not found.');
@@ -663,7 +873,7 @@ export async function pushArticle(
     // so the stale link is replaced by the push below rather than blocking it.
   }
 
-  if (mode === 'update') {
+  if (mode === 'update' || mode === 'update_published') {
     if (!existingLink) {
       refuse(
         new CmsError(
@@ -685,16 +895,60 @@ export async function pushArticle(
 
     refreshLinkState(existingLink!.id, remote!.status, remote!.url);
 
-    // NEVER TOUCH PUBLISHED CONTENT. Updating a live post would either
-    // overwrite what readers are seeing, or — by asking for draft status —
-    // unpublish it. Neither is Cynth's decision to make.
-    if (remote!.status !== 'draft') {
+    if (mode === 'update' && remote!.status !== 'draft') {
+      // The ordinary update still refuses, and now it can say what to do
+      // instead rather than sending the editor to WordPress.
       refuse(
         new CmsError(
           'remote_post_published',
-          `Post ${existingLink!.externalId} on ${connection.name} is no longer a draft (its status is "${remote!.status}"). Cynth does not modify content that has already been published — edit it in WordPress instead.`,
+          `Post ${existingLink!.externalId} on ${connection.name} is no longer a draft (its status is "${remote!.status}"). ` +
+            'Use "Update the live article" to replace what readers are seeing, which asks you to confirm first.',
         ),
       );
+    }
+
+    if (mode === 'update_published') {
+      // Pointing the dangerous door at a draft is a mistake worth catching:
+      // the ordinary update does the same job with none of the risk.
+      if (remote!.status === 'draft') {
+        refuse(
+          new CmsError(
+            'remote_post_is_draft',
+            `Post ${existingLink!.externalId} on ${connection.name} is still a draft, so nobody is reading it. Use the ordinary update.`,
+          ),
+        );
+      }
+
+      /**
+       * TWO RISKS, TWO SEPARATE ACKNOWLEDGEMENTS.
+       *
+       * The first is inherent: this replaces what readers are currently
+       * seeing. `confirmed` covers that, and the route never defaults it.
+       *
+       * The second is rarer and worse: somebody edited the post IN WordPress
+       * after Cynth last pushed it, so pushing now discards their edit
+       * silently. One blanket "yes" must not cover both — a person confirming
+       * "replace the live article" has not been told there is unmerged work
+       * on the other side.
+       */
+      if (!options.confirmed) {
+        refuse(
+          new CmsError(
+            'live_update_not_confirmed',
+            `Post ${existingLink!.externalId} is live on ${connection.name}. Replacing it changes what readers see right now. Confirm to continue.`,
+          ),
+        );
+      }
+
+      if (remoteEditedSincePush(remote!, existingLink!) && !options.acknowledgeRemoteEdits) {
+        refuse(
+          new CmsError(
+            'remote_edited_since_push',
+            `Post ${existingLink!.externalId} was edited on ${connection.name} at ${remote!.modifiedAt} — after Cynth last pushed it (${existingLink!.lastPushedAt}). ` +
+              'Pushing now discards that edit. Check WordPress first, then confirm again to overwrite it.',
+          ),
+        );
+      }
     }
   }
 
@@ -709,9 +963,13 @@ export async function pushArticle(
 
   try {
     const post =
-      mode === 'update' && existingLink
-        ? await connector.updateDraft(existingLink.externalId, payload, context)
-        : await connector.createDraft(payload, context);
+      mode === 'update_published' && existingLink
+        ? // No status and no slug: see the connector. A published post stays
+          // published, and its live URL does not move.
+          await connector.updatePublished(existingLink.externalId, payload, context)
+        : mode === 'update' && existingLink
+          ? await connector.updateDraft(existingLink.externalId, payload, context)
+          : await connector.createDraft(payload, context);
 
     const link = upsertLink({
       articleId,
@@ -725,7 +983,12 @@ export async function pushArticle(
 
     // The operation actually performed, which can differ from the requested
     // mode when a create replaced a link whose remote post had been deleted.
-    const operation: PushMode = mode === 'update' && existingLink ? 'update' : 'create';
+    const operation: PushMode =
+      mode === 'update_published' && existingLink
+        ? 'update_published'
+        : mode === 'update' && existingLink
+          ? 'update'
+          : 'create';
 
     recordPush({
       articleId,
@@ -747,7 +1010,12 @@ export async function pushArticle(
       message:
         operation === 'create'
           ? `Created draft post ${post.id} on ${connection.name}. It is a draft — nothing has been published.`
-          : `Updated draft post ${post.id} on ${connection.name}. It is still a draft — nothing has been published.`,
+          : operation === 'update'
+            ? `Updated draft post ${post.id} on ${connection.name}. It is still a draft — nothing has been published.`
+            : // Deliberately not "nothing has been published": this one changed
+              // a page readers can see, and saying otherwise would be a lie in
+              // the one place it matters most.
+              `Replaced the live article at post ${post.id} on ${connection.name}. It is published, and readers see the new version now.`,
     };
   } catch (error) {
     const message = isCmsError(error)

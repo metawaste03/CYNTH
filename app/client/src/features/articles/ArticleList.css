@@ -28,6 +28,20 @@
   min-width: 0;
 }
 
+/* The article number, sitting to the left of the title.
+
+   Tabular figures so a column of them lines up, and muted so it reads as a
+   reference rather than competing with the headline — but selectable, because
+   the whole point is being able to copy it into a script or a message. */
+.article-list__id {
+  display: inline-block;
+  margin-right: 0.5rem;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
 .article-list__title {
   display: inline-block;
   font-size: 1.05rem;

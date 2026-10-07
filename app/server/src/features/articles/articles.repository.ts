@@ -255,6 +255,10 @@ function ensureUniqueSlug(base: string, excludeId: number): string {
  * article it identifies. An article with no title at all keeps a null slug —
  * inventing one would put a meaningless handle on a blank draft.
  */
+export function refreshArticleSlug(id: number): void {
+  refreshSlug(id);
+}
+
 function refreshSlug(id: number): void {
   const db = getDatabase();
   const row = db.prepare('SELECT title, generated_title FROM articles WHERE id = ?').get(id) as unknown as

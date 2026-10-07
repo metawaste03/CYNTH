@@ -48,6 +48,7 @@ export function EditProduct() {
           title: product.title,
           brand: product.brand ?? '',
           category: product.category ?? '',
+          isFeaturedPick: product.isFeaturedPick ?? false,
           shortDescription: product.shortDescription ?? '',
           description: product.description ?? '',
           affiliateLink: product.affiliateLink ?? '',

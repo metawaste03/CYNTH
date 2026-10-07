@@ -1,3 +1,4 @@
+import { describePublicationMarket } from '../../generation/publicationMarket.service.js';
 import { getDatabase } from '../../../shared/database/index.js';
 import { runStage } from '../stageRunner.service.js';
 import type { StageResult } from '../stageRunner.service.js';
@@ -13,6 +14,13 @@ import {
 import { MAX_AUTOMATIC_REVISIONS, STAGE_DEFINITIONS } from '../pipeline.constants.js';
 import { getTemplate } from '../../templates/templates.repository.js';
 import { describeLengthBand, lengthBandFor } from '../../templates/articleLength.service.js';
+import {
+  META_DESCRIPTION_MAX_CHARS,
+  META_DESCRIPTION_MIN_CHARS,
+  SEO_TITLE_MAX_CHARS,
+} from '../../seo/seo.constants.js';
+import { getArticleSeo, setSeoMetadataField } from '../../seo/seo.repository.js';
+import { refreshArticleSlug } from '../../articles/articles.repository.js';
 import type { SectionSchema } from '../../templates/templates.definitions.js';
 import { buildGenerationContext } from '../../generation/generationContext.service.js';
 import { GenerationError, isSpendRefusal } from '../../generation/generation.errors.js';
@@ -44,6 +52,33 @@ export interface ArticleSection {
 export interface GeneratedArticle {
   title: string;
   excerpt: string;
+  /**
+   * The search-result description.
+   *
+   * NOT the excerpt, and the difference is the point. The excerpt is a listing
+   * blurb for people already on the site; this is the line that has to earn a
+   * click from a results page against nine competitors. Written by the writer
+   * because the writer is the only stage that has read the finished article.
+   *
+   * Empty when the model omitted it. Nothing invents one downstream — a
+   * fabricated description is worse than letting the search engine pick its
+   * own snippet from the text.
+   */
+  metaDescription: string;
+  /**
+   * The title as it should appear in a search result.
+   *
+   * A different job from the headline. The editorial title is the H1 and can
+   * take the space it needs to be precise; a SERP title has about 60
+   * characters before it is cut off mid-word. Measured on the first nine
+   * articles, EIGHT would have been truncated — which is what this field is
+   * for.
+   *
+   * Empty when the editorial title already works at that length. An SEO title
+   * that merely repeats the headline is a field to maintain for nothing, and
+   * Cynth already falls back to the article title when this is unset.
+   */
+  seoTitle: string;
   sections: ArticleSection[];
   faq: { question: string; answer: string }[];
   sources: { url: string; title: string }[];
@@ -111,7 +146,7 @@ function describeSection(section: SectionSchema): string {
  * Emitted verbatim. Nothing here parses, summarises or trims a voice document:
  * the editor wrote it to be followed, not interpreted.
  */
-function buildVoiceBlock(context: ReturnType<typeof buildGenerationContext>): string {
+export function buildVoiceBlock(context: ReturnType<typeof buildGenerationContext>): string {
   if (!context) return '';
 
   const own = context.author?.skills ?? [];
@@ -214,6 +249,13 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     'Do not invent facts, statistics, prices, product specifications or sources. Where something cannot be supported, write what can be and say plainly where certainty ends.',
     'Do not write HTML. The website owns presentation; you write the content.',
     'Do not write meta-commentary, and do not mention this brief or these instructions.',
+    // Said explicitly because the obvious failure is returning the excerpt
+    // twice. They are written for different readers in different places.
+    `The meta description is what appears under the title in search results. Write it for someone who has not clicked yet: say what the article settles and who it is for, in ${META_DESCRIPTION_MIN_CHARS}-${META_DESCRIPTION_MAX_CHARS} characters. It is NOT the excerpt reworded, and it must not be a sentence lifted from the article.`,
+    // Returning the headline again is the obvious failure, and it is worse
+    // than returning nothing: it creates a second field to maintain that says
+    // the same thing.
+    `The "seo_title" is the same article seen from a results page, where about ${SEO_TITLE_MAX_CHARS} characters survive before it is cut off. Keep the part that makes someone click and drop the part that only makes sense once they have. If the title above is already ${SEO_TITLE_MAX_CHARS} characters or fewer, return an empty string rather than repeating it.`,
     // The instruction that makes the voice documents below matter. Without it
     // they read as background rather than as the thing being asked for.
     'Write as the named author, in the voice of the documents below. Where those documents conflict with any summary in this prompt, the documents win.',
@@ -230,6 +272,7 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     `Topic: ${brief.topic}`,
     `Angle: ${brief.recommendedAngle}`,
     `Audience: ${brief.audience}`,
+    describePublicationMarket(),
     `Content gap to fill: ${brief.contentGap}`,
     `Search intent: ${brief.searchIntent}`,
     `Commercial intent: ${brief.commercialIntent}`,
@@ -254,6 +297,8 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     '{',
     '  "title": "the final title",',
     '  "excerpt": "one or two sentences for the listing page",',
+    `  "meta_description": "the search-result description, ${META_DESCRIPTION_MIN_CHARS}-${META_DESCRIPTION_MAX_CHARS} characters",`,
+    `  "seo_title": "the title for search results, at most ${SEO_TITLE_MAX_CHARS} characters — or an empty string if the title above already fits",`,
     '  "sections": [{"key": "must match a key above", "heading": "the heading as written", "body": "markdown, no H1 or H2 — the heading is separate"}],',
     template.contentSchema.requiresFaq
       ? '  "faq": [{"question": "", "answer": ""}],'
@@ -267,7 +312,54 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     .join('\n');
 }
 
-function parseArticle(text: string): GeneratedArticle {
+/**
+ * A reply that skipped most of the article is a FAILED generation.
+ *
+ * Found the expensive way. A writer returned one section of the nine its
+ * template requires — syntactically perfect JSON, correct title, correct
+ * excerpt, `faq: []`, `sources: []`, and a single hero paragraph — and the
+ * stage recorded SUCCESS. 2,028 output tokens where the same template
+ * normally draws 7,000 to 10,700. The defect only surfaced downstream, as a
+ * reviewer suddenly producing twice the usual volume of corrections, and an
+ * editor noticing the reviewer was working too hard.
+ *
+ * The template has always carried a `required` flag per section. Nothing read
+ * it. The only check was that at least ONE section came back, which one did.
+ *
+ * Failing here rather than saving it means the stage retries and, if the
+ * primary model keeps under-delivering, falls back to the one behind it —
+ * which is the whole point of having a fallback.
+ */
+type WriterTemplate = NonNullable<ReturnType<typeof getTemplate>>;
+
+function assertSectionsCovered(article: GeneratedArticle, template: WriterTemplate | null): void {
+  if (!template) return;
+
+  const required = template.contentSchema.sections.filter((section) => section.required).map((section) => section.key);
+  if (!required.length) return;
+
+  const returned = new Set(article.sections.map((section) => section.key));
+
+  /**
+   * Some required sections are delivered by their own top-level field rather
+   * than as a body of prose, and always have been: every good article in the
+   * library returns `faq` as a list of question/answer pairs and no `faq`
+   * section. A coverage check that did not know this would have rejected all
+   * of them — caught by running it against the existing articles before it
+   * shipped, not by a test.
+   */
+  if (article.faq.length) returned.add('faq');
+  if (article.sources.length) returned.add('sources');
+
+  const missing = required.filter((key) => !returned.has(key));
+  if (!missing.length) return;
+
+  throw new Error(
+    `the reply is missing ${missing.length} of ${required.length} required sections (${missing.join(', ')})`,
+  );
+}
+
+export function parseArticle(text: string, template: WriterTemplate | null = null): GeneratedArticle {
   const json = readJsonObject(text);
 
   const title = typeof json.title === 'string' ? json.title.trim() : '';
@@ -285,9 +377,24 @@ function parseArticle(text: string): GeneratedArticle {
 
   if (!sections.length) throw new Error('the reply contained no usable sections');
 
-  return {
+  const article: GeneratedArticle = {
     title,
     excerpt: typeof json.excerpt === 'string' ? json.excerpt.trim().slice(0, 600) : '',
+    // Capped at the SERP limit rather than rejected for being long: an
+    // over-long description is still usable and a search engine simply
+    // truncates it, whereas discarding it would leave nothing at all.
+    // Only kept when it is genuinely shorter than the headline. A model that
+    // returns the title again, or something longer, has not done the job, and
+    // storing it would make the SERP worse rather than better.
+    seoTitle: (() => {
+      const proposed = typeof json.seo_title === 'string' ? json.seo_title.trim().replace(/\s+/g, ' ') : '';
+      if (!proposed || proposed.length > SEO_TITLE_MAX_CHARS) return '';
+      return proposed === title ? '' : proposed;
+    })(),
+    metaDescription:
+      typeof json.meta_description === 'string'
+        ? json.meta_description.trim().replace(/\s+/g, ' ').slice(0, META_DESCRIPTION_MAX_CHARS)
+        : '',
     sections,
     faq: Array.isArray(json.faq)
       ? (json.faq as unknown[])
@@ -308,6 +415,9 @@ function parseArticle(text: string): GeneratedArticle {
           .filter((entry) => entry.url)
       : [],
   };
+
+  assertSectionsCovered(article, template);
+  return article;
 }
 
 /** Persists both representations: structured for validation and WordPress, markdown for what already reads it. */
@@ -318,6 +428,29 @@ function saveArticle(articleId: number, article: GeneratedArticle, model: string
        generated_at = datetime('now'), generated_model = ?, updated_at = datetime('now')
      WHERE id = ?`,
   ).run(article.title, article.excerpt, renderArticleMarkdown(article), JSON.stringify(article), model, articleId);
+
+  // THE SLUG. This write is the first time the article has a title, and the
+  // slug is derived from the title — so without this the article has no slug
+  // until the server next restarts and the startup backfill happens to catch
+  // it. The manual generation path has always done this; the pipeline never
+  // did, which is why a freshly generated article reported "no slug".
+  refreshArticleSlug(articleId);
+
+  // THE META DESCRIPTION, but never over the top of a human one.
+  //
+  // An editor who has written their own search-result copy has made a
+  // decision, and a regenerate or a revision must not silently replace it.
+  // Only an empty field is filled.
+  const stored = getArticleSeo(articleId).metadata;
+
+  if (!stored.metaDescription?.trim() && article.metaDescription.trim()) {
+    setSeoMetadataField(articleId, 'meta_description', article.metaDescription.trim());
+  }
+
+  // Same rule: fill an empty field, never replace a decision someone made.
+  if (!stored.seoTitle?.trim() && article.seoTitle.trim()) {
+    setSeoMetadataField(articleId, 'seo_title', article.seoTitle.trim());
+  }
 }
 
 export async function runArticleGeneration(
@@ -338,7 +471,10 @@ export async function runArticleGeneration(
       pipelineId,
       stage: 'article_generation',
       prompt: buildWriterPrompt(pipelineId, brief),
-      parse: parseArticle,
+      // Bound to the template, so a reply that skips required sections fails
+      // the stage and retries rather than being saved as a finished article.
+      parse: (text: string) =>
+        parseArticle(text, getTemplate(brief.template.templateId, brief.template.templateVersion)),
       timeoutMs: WRITE_TIMEOUT_MS,
       assumedCompletionTokens: 4000,
       confirmedCost: options.confirmedCost,
@@ -432,6 +568,7 @@ function buildReviewerPrompt(
     `Topic: ${brief.topic}`,
     `Angle: ${brief.recommendedAngle}`,
     `Audience: ${brief.audience}`,
+    describePublicationMarket(),
     `Article type: ${brief.articleType}`,
     `Template: ${brief.template.templateId} v${brief.template.templateVersion}`,
     `Required sections: ${brief.template.sectionKeys.join(', ')}`,
@@ -594,6 +731,136 @@ export async function runArticleReview(
 }
 
 /* ---------------------------------------------------- the one revision --- */
+
+/**
+ * The SEO findings, as one specification.
+ *
+ * Deliberately the same shape as the editorial revision above, because it is
+ * the same job: a list of specific corrections applied to a finished article
+ * by a model that is editing rather than rewriting. The differences are what
+ * the findings are about and where they came from.
+ *
+ * ONE CALL FOR ALL OF THEM. Thirteen findings sent one at a time would cost
+ * thirteen times as much, and each call after the first would be editing an
+ * article the previous one had already changed — so a later fix could quietly
+ * undo an earlier one.
+ */
+export function buildSeoRevisionPrompt(
+  article: GeneratedArticle,
+  findings: { code: string; summary: string; explanation: string | null; recommendation: string | null; element: string | null }[],
+  voice: string,
+): string {
+  return [
+    'You are applying a list of specific SEO corrections to a finished article. You are editing, not rewriting.',
+    '',
+    '=== RULES ===',
+    'Change ONLY what the findings below require. Every other sentence must survive exactly as written.',
+    'Return every section of the article, including the ones you did not touch, so the result is a complete article.',
+    'Do not reorganise or re-order sections unless a finding explicitly asks for it.',
+    // The rule that matters most here, because several findings ask for MORE
+    // words and a model given that instruction will pad if it has nothing to
+    // say.
+    'Where a finding asks for a passage to be longer, add substance — a reason, a number, a worked example, a caveat. Do not restate what is already there in different words. If there is genuinely nothing more to say, merge the passage into its neighbour instead, which is the alternative the finding offers.',
+    'Do not add new claims, new products, or new sources while fixing something else.',
+    'Preserve every [[product:<id>]] marker exactly where it is.',
+    'Keep the article inside its existing length unless a finding requires otherwise.',
+    '',
+    voice
+      ? `${voice}\nAnything you rewrite must be written in this voice. A correction that reads as a different author is not a correction.`
+      : '',
+    '',
+    '=== THE FINDINGS ===',
+    ...findings.map((finding, index) =>
+      [
+        `${index + 1}. ${finding.code}${finding.element ? ` — "${finding.element}"` : ''}`,
+        `   Problem: ${finding.summary}`,
+        finding.explanation ? `   Detail: ${finding.explanation}` : '',
+        finding.recommendation ? `   Required change: ${finding.recommendation}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    ),
+    '',
+    '=== THE ARTICLE ===',
+    JSON.stringify(article),
+    '',
+    '=== OUTPUT ===',
+    'Reply with the complete corrected article as JSON, in exactly the same shape you received it. No commentary, no code fence.',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/**
+ * Places approved internal links inside an article that is already finished.
+ *
+ * THE NARROWEST EDIT IN THE SYSTEM, and the prompt is written to keep it that
+ * way: a link is a few characters of markdown around words that are already
+ * on the page. Nothing else may move.
+ *
+ * The anchor is the model's choice, not Cynth's. The stored anchor suggestion
+ * is usually the target article's own title, which almost never appears in the
+ * source prose — insisting on it would produce a sentence that reads like a
+ * citation, or no link at all. What Cynth does insist on is that the anchor be
+ * text the article ALREADY contains, so no new claim arrives with the link.
+ */
+export function buildInternalLinkPrompt(
+  article: GeneratedArticle,
+  placements: { targetTitle: string; url: string; anchor: string | null; reason: string | null }[],
+  voice: string,
+): string {
+  return [
+    'You are adding internal links to a finished article. You are linking, not editing.',
+    '',
+    '=== RULES ===',
+    'Add each link below exactly once, as markdown: [anchor text](url).',
+    // The whole point. A model asked to "add a link" will happily write a new
+    // sentence to hang it on, and that sentence is an unreviewed claim.
+    'Do NOT write any new sentence, clause or transition. The anchor text must be words that are ALREADY in the article body.',
+    'Every other character of the article must survive exactly as it is. Adding a link is the only change you may make.',
+    'Choose the anchor by finding the sentence that is already about the target subject, and linking two to six of its own words. Prefer a noun phrase naming the subject over a bare "here" or "this article".',
+    'Never put a link inside a heading, and never inside an existing link.',
+    'Never place a link in the first sentence of the article, and do not put two links in the same sentence.',
+    'If the article genuinely says nothing related to a target, leave that link out rather than inventing somewhere for it. A missing link is fine; a fabricated sentence is not.',
+    'Preserve every [[product:<id>]] marker exactly where it is.',
+    'Return every section of the article, including the ones you did not touch.',
+    '',
+    voice ? `${voice}\nThe linked words are the author's own, so they must still read as this author.` : '',
+    '',
+    '=== THE LINKS TO PLACE ===',
+    ...placements.map((placement, index) =>
+      [
+        `${index + 1}. ${placement.targetTitle}`,
+        `   URL: ${placement.url}`,
+        placement.reason ? `   Why the two are related: ${placement.reason}` : '',
+        placement.anchor
+          ? `   Suggested subject: ${placement.anchor} — use it only if those words are in the body; otherwise pick words that are.`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    ),
+    '',
+    '=== THE ARTICLE ===',
+    JSON.stringify(article),
+    '',
+    '=== OUTPUT ===',
+    'Reply with the complete article as JSON, in exactly the same shape you received it, with the links in place. No commentary, no code fence.',
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+/**
+ * Saves an article an editor asked to have revised outside the pipeline.
+ *
+ * Shares `saveArticle` so the slug refresh and the never-overwrite-a-human
+ * metadata rule apply identically — a second way of writing an article that
+ * quietly skipped those would be a bug waiting to happen.
+ */
+export function applyRevisedArticle(articleId: number, article: GeneratedArticle, model: string): void {
+  saveArticle(articleId, article, model);
+}
 
 function buildRevisionPrompt(article: GeneratedArticle, review: ArticleReview, voice: string): string {
   const structural = review.issues.some((issue) => issue.scope === 'structural');

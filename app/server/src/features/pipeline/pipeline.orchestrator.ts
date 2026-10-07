@@ -67,6 +67,7 @@ import type {
 } from './checkpoints.service.js';
 import { toProductOption } from './checkpoints.service.js';
 import { createArticleDraft, getArticleById } from '../articles/articles.repository.js';
+import { getArticleSeo, saveSeoConfiguration } from '../seo/seo.repository.js';
 import { attachProduct, detachProduct, listArticleProducts } from '../articles/articleProducts.repository.js';
 import { listProducts } from '../products/products.repository.js';
 import { getTemplate } from '../templates/templates.repository.js';
@@ -512,6 +513,39 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
         research.researchSummary,
         pipeline.articleId,
       );
+
+    /* ---- the SEO engine's own configuration -------------------------------
+     *
+     * The keyword stage has just decided what this article targets, and the
+     * SEO engine has a field for exactly that — which nothing was filling.
+     * The consequence was visible on the live site: Rank Math grades a post
+     * against its focus keyword, and with no target query Cynth sent none, so
+     * there was nothing for it to grade.
+     *
+     * Written from what the stage already produced, so this costs nothing and
+     * cannot disagree with the keywords stored below it.
+     *
+     * NEVER over the top of a human. An editor who has set a target query has
+     * chosen what this article competes for, and a rerun must not quietly
+     * change it.
+     */
+    const seoRecord = getArticleSeo(pipeline.articleId);
+    if (!seoRecord.configuration.targetQuery?.trim() && keywords.primaryKeyword.trim()) {
+      saveSeoConfiguration(pipeline.articleId, {
+        ...seoRecord.configuration,
+        targetQuery: keywords.primaryKeyword.trim(),
+        // Only fill what is empty: each of these is an editorial decision once
+        // it has been made, and the pipeline is filling in blanks, not
+        // overruling anyone.
+        secondaryKeywords: seoRecord.configuration.secondaryKeywords.length
+          ? seoRecord.configuration.secondaryKeywords
+          : keywords.secondaryKeywords,
+        semanticTopics: seoRecord.configuration.semanticTopics.length
+          ? seoRecord.configuration.semanticTopics
+          : keywords.semanticTerms,
+        targetAudience: seoRecord.configuration.targetAudience?.trim() || research.audience || null,
+      });
+    }
 
     const db = getDatabase();
     const existingKeywords = db.prepare('SELECT id FROM keywords WHERE article_id = ?').get(pipeline.articleId);

@@ -49,13 +49,57 @@ export interface SeoFieldMapping {
 }
 
 /**
- * THE MAPPING REGISTRY — DELIBERATELY EMPTY.
+ * Rank Math (Milestone 37).
  *
- * No SEO plugin integration ships in Milestone 14. `getSeoFieldMapping()`
- * returns null for everything, so the connector sends no plugin fields, which
- * is the only honest behaviour while the target stack is unknown.
+ * Rank Math stores its per-post SEO fields as ordinary post meta under these
+ * keys. They are stable and long-standing, which is why they can be written
+ * without a plugin-specific API.
+ *
+ * WHAT THIS BUYS. Rank Math falls back to its `%excerpt%` template when a post
+ * has no description of its own — so a post already shows the article's
+ * excerpt in search results. Writing `rank_math_description` replaces that
+ * fallback with copy written to be read on a results page, which is a
+ * different job from a listing blurb.
+ *
+ * ONE PRECONDITION, and it is on the WordPress side: these keys are not
+ * registered with `show_in_rest`, so the REST API silently drops them unless
+ * the site registers them. `docs/rank-math-rest-meta.php` is the mu-plugin
+ * that does it. Without that file installed, this mapping produces fields
+ * WordPress ignores — no error, no effect. `cmsPublish` reports what it sent
+ * so the difference is visible.
+ *
+ * Only non-empty values are emitted. An empty string here would overwrite
+ * something a human had written in Rank Math's own editor, which is the one
+ * outcome worse than sending nothing.
  */
-const MAPPINGS: readonly SeoFieldMapping[] = [];
+const RANK_MATH: SeoFieldMapping = {
+  connectorType: 'wordpress',
+  target: 'rankmath',
+  label: 'Rank Math SEO',
+  map(metadata) {
+    const fields: Record<string, unknown> = {};
+
+    if (metadata.metaDescription) fields.rank_math_description = metadata.metaDescription;
+    if (metadata.seoTitle) fields.rank_math_title = metadata.seoTitle;
+    if (metadata.canonicalUrl) fields.rank_math_canonical_url = metadata.canonicalUrl;
+    // Rank Math's "focus keyword" is what its own on-page scoring grades
+    // against. Cynth's target query is exactly that, so the two are the same
+    // field under two names.
+    if (metadata.targetQuery) fields.rank_math_focus_keyword = metadata.targetQuery;
+
+    return fields;
+  },
+};
+
+/**
+ * THE MAPPING REGISTRY.
+ *
+ * A mapping is registered only for a stack that has actually been chosen.
+ * `getSeoFieldMapping()` returns null for anything else, so the connector
+ * sends no plugin fields — the only honest behaviour while a target is
+ * unknown.
+ */
+const MAPPINGS: readonly SeoFieldMapping[] = [RANK_MATH];
 
 export function getSeoFieldMapping(connectorType: string, target: string): SeoFieldMapping | null {
   return MAPPINGS.find((mapping) => mapping.connectorType === connectorType && mapping.target === target) ?? null;
@@ -122,9 +166,13 @@ export function buildCmsSeoMetadata(article: ArticleDraftDto): CmsSeoMetadata | 
  *
  * Every entry carries `approved: true` because nothing else is returned:
  * a proposed link is a suggestion inside Cynth and must not reach a CMS
- * payload. Nothing downstream inserts these into the article body — the
- * connector maps the body from the article's own content, and this list
- * travels as metadata for a future integration to use.
+ * payload.
+ *
+ * THIS LIST IS STILL ONLY METADATA. `internalLinks.service.ts` is what writes
+ * an approved link into the body, and it writes it into the ARTICLE — so by
+ * the time a push happens the link is already part of the content the
+ * connector maps. Nothing here inserts anything; that separation is why a
+ * link can be inspected in Cynth before it reaches a reader.
  */
 function approvedLinks(articleId: number, kind: 'internal' | 'external'): CmsLinkRecommendation[] {
   if (kind === 'internal') {

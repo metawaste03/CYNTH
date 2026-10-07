@@ -7,6 +7,7 @@ import { isSpendRefusal } from '../../generation/generation.errors.js';
 import { getThemeById, getProjectById } from '../../content/content.repository.js';
 import { getArticleById } from '../../articles/articles.repository.js';
 import { buildCoverageBlock } from '../../articles/coverage.service.js';
+import { buildBalanceBlock } from '../../articles/areaBalance.service.js';
 
 /**
  * THE RESEARCH STAGES — topic research, keyword/title research, and article
@@ -99,7 +100,13 @@ function themeContext(pipelineId: number): {
     // a subject already covered, and it could not deliberately fill a gap in
     // its own catalogue. The current article is excluded — an article cannot
     // be its own prior coverage.
-    coverage: buildCoverageBlock(pipeline?.themeId ?? null, pipeline?.articleId),
+    // HOW THE AREA IS BALANCED, as counts rather than a plea. The coverage
+    // block already asked the stage to notice when an area "clusters on one
+    // sub-subject, one product category or one species" — but it could only
+    // infer that from a list of titles, and the skew it was meant to catch
+    // lived in the product library, which it cannot see at all.
+    coverage:
+      buildCoverageBlock(pipeline?.themeId ?? null, pipeline?.articleId) + buildBalanceBlock(theme?.name ?? null),
   };
 }
 

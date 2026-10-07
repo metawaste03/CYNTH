@@ -6,6 +6,8 @@ export interface CmsConnectionInput {
   description: string | null;
   /** The site root, e.g. http://everyfivedays.local. Never defaulted — the user states where their site is. */
   baseUrl: string;
+  /** Which SEO plugin the site runs, e.g. 'rankmath'. Null means none chosen and no plugin fields are sent. */
+  seoTarget: string | null;
   authMethod: string;
   username: string | null;
   /**
@@ -111,6 +113,13 @@ export function validateCmsConnectionInput(body: unknown): ValidationResult<CmsC
       connectorType,
       description: (input.description as string | undefined)?.trim() || null,
       baseUrl,
+      // Free text on purpose: the registry decides what is recognised, and an
+      // unrecognised target sends no plugin fields rather than erroring. A
+      // typo therefore degrades to "no SEO fields", never to wrong ones.
+      seoTarget:
+        typeof input.seoTarget === 'string' && input.seoTarget.trim()
+          ? input.seoTarget.trim().toLowerCase().slice(0, 50)
+          : null,
       authMethod,
       username: (input.username as string | undefined)?.trim() || null,
       credential: input.credential as string | undefined,

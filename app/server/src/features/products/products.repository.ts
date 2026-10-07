@@ -1,10 +1,13 @@
 import { getDatabase } from '../../shared/database/index.js';
 import type { ProductRow, ProductImageRow } from '../../shared/database/types.js';
 import type { ProductInput } from './products.validation.js';
+import { deriveVendor } from './vendor.service.js';
 
 export interface ProductListFilters {
   search?: string;
   category?: string;
+  /** Show this product in its category's picks row on the site. */
+  isFeaturedPick?: boolean;
   status?: 'active' | 'inactive';
   /** Filter to one thematic area (Milestone 18). 'none' lists products with no area chosen. */
   themeId?: number | 'none';
@@ -36,6 +39,7 @@ export interface ProductDto {
   title: string;
   brand: string | null;
   category: string | null;
+  isFeaturedPick: boolean;
   shortDescription: string | null;
   description: string | null;
   /** THE USER'S LINK. Supplied by them, stored verbatim, never rewritten by research. */
@@ -83,6 +87,7 @@ function mapProduct(row: ProductRow): ProductDto {
     title: row.title,
     brand: row.brand,
     category: row.category,
+    isFeaturedPick: Number((row as { is_featured_pick?: number }).is_featured_pick ?? 0) === 1,
     shortDescription: row.short_description,
     description: row.description,
     affiliateLink: row.affiliate_link,
@@ -226,8 +231,8 @@ export function createProduct(input: ProductInput): ProductDetailDto {
   const insert = db.prepare(`
     INSERT INTO products (
       title, brand, category, short_description, description, affiliate_link, editorial_fit, notes, is_active, theme_id,
-      use_case, problem_solved, best_for, key_features
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      use_case, problem_solved, best_for, key_features, vendor, is_featured_pick
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = insert.run(
     input.title,
@@ -244,6 +249,10 @@ export function createProduct(input: ProductInput): ProductDetailDto {
     input.problemSolved ?? null,
     input.bestFor ?? null,
     input.keyFeatures?.length ? JSON.stringify(input.keyFeatures) : null,
+    // Read from the link rather than asked for: the affiliate URL is the only
+    // authoritative statement of where a reader is being sent.
+    deriveVendor(input.affiliateLink)?.slug ?? null,
+    input.isFeaturedPick ? 1 : 0,
   );
   return getProductById(Number(result.lastInsertRowid))!;
 }
@@ -257,6 +266,13 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
     UPDATE products SET
       title = ?, brand = ?, category = ?, short_description = ?, description = ?,
       affiliate_link = ?, editorial_fit = ?, notes = ?, theme_id = ?,
+      -- Re-derived on every save, because the link is where it comes from:
+      -- change the affiliate URL to a different shop and the button must
+      -- follow it rather than keep naming the old one.
+      vendor = ?,
+      -- Undefined leaves the flag alone, so a form that does not send it
+      -- cannot silently unpick a product.
+      is_featured_pick = COALESCE(?, is_featured_pick),
       -- Undefined leaves what is there alone, so saving the form does not wipe
       -- fields that product research wrote and the form did not send.
       use_case = COALESCE(?, use_case),
@@ -275,6 +291,8 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
     input.editorialFit ?? null,
     input.notes ?? null,
     input.themeId ?? null,
+    deriveVendor(input.affiliateLink)?.slug ?? null,
+    input.isFeaturedPick === undefined ? null : input.isFeaturedPick ? 1 : 0,
     // undefined -> NULL -> COALESCE keeps the stored value. An empty string is
     // a deliberate clear and is written as one.
     input.useCase ?? null,
@@ -285,6 +303,35 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
   );
 
   return getProductById(id);
+}
+
+/**
+ * Gives a vendor to every product saved before the column was written to.
+ *
+ * Idempotent, and it only fills blanks: a vendor an editor set by hand is
+ * never overwritten by one read from a URL.
+ *
+ * This is not a migration for a schema change — the column has existed all
+ * along. Nothing had ever written to it, so every row was NULL and every
+ * product card on the site read "Check price" instead of naming the shop.
+ */
+export function backfillMissingVendors(): number {
+  const db = getDatabase();
+  const rows = db
+    .prepare("SELECT id, affiliate_link FROM products WHERE (vendor IS NULL OR trim(vendor) = '')")
+    .all() as { id: number; affiliate_link: string | null }[];
+
+  const update = db.prepare('UPDATE products SET vendor = ? WHERE id = ?');
+  let filled = 0;
+
+  for (const row of rows) {
+    const vendor = deriveVendor(row.affiliate_link);
+    if (!vendor) continue;
+    update.run(vendor.slug, row.id);
+    filled += 1;
+  }
+
+  return filled;
 }
 
 export function setProductActiveStatus(id: number, isActive: boolean): ProductDetailDto | null {

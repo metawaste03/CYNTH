@@ -34,6 +34,8 @@ export interface ArticleProductCard {
   brand: string | null;
   imageUrl: string | null;
   affiliateUrl: string | null;
+  /** The card shows the short one. The long description is writer material. */
+  shortDescription: string | null;
   description: string | null;
   useCase: string | null;
   keyFeatures: string[];

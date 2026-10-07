@@ -9,6 +9,7 @@ export interface ProductFormValues {
   title: string;
   brand: string;
   category: string;
+  isFeaturedPick: boolean;
   shortDescription: string;
   description: string;
   affiliateLink: string;
@@ -50,6 +51,7 @@ const EMPTY_VALUES: ProductFormValues = {
   title: '',
   brand: '',
   category: '',
+  isFeaturedPick: false,
   shortDescription: '',
   description: '',
   affiliateLink: '',
@@ -80,6 +82,31 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
       .then(setThemes)
       .catch(() => setThemes([]));
   }, []);
+
+  /**
+   * Choosing a thematic area sets the category to match.
+   *
+   * It does NOT overwrite a category the editor has deliberately made
+   * different — only one that is empty or still matches the theme it was
+   * following. Otherwise changing the theme would quietly undo a considered
+   * choice, which is the opposite of helpful.
+   */
+  function chooseTheme(next: string) {
+    // Everything is read inside the updater rather than from the closure, so
+    // two quick changes in a row cannot leave the category following a theme
+    // that is no longer selected.
+    setValues((current) => {
+      const previous = themes.find((theme) => String(theme.id) === current.themeId);
+      const chosen = themes.find((theme) => String(theme.id) === next);
+      const followingTheme = !current.category || current.category === previous?.name;
+
+      return {
+        ...current,
+        themeId: next,
+        category: followingTheme ? (chosen?.name ?? '') : current.category,
+      };
+    });
+  }
 
   function updateField<K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -118,6 +145,7 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           title: values.title.trim(),
           brand: values.brand.trim() || undefined,
           category: values.category.trim() || undefined,
+          isFeaturedPick: values.isFeaturedPick,
           shortDescription: values.shortDescription.trim() || undefined,
           description: values.description.trim() || undefined,
           affiliateLink: values.affiliateLink.trim() || undefined,
@@ -170,12 +198,8 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           <input value={values.brand} onChange={(e) => updateField('brand', e.target.value)} />
         </label>
         <label>
-          Category
-          <input value={values.category} onChange={(e) => updateField('category', e.target.value)} />
-        </label>
-        <label>
           Thematic Area
-          <select value={values.themeId} onChange={(e) => updateField('themeId', e.target.value)}>
+          <select value={values.themeId} onChange={(e) => chooseTheme(e.target.value)}>
             <option value="">No thematic area</option>
             {themes.map((theme) => (
               <option key={theme.id} value={String(theme.id)}>
@@ -186,6 +210,49 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           <span className="product-form__hint">
             Which content area this product belongs to. Optional, and it never stops a product being used in another
             area — it gives the generation step extra context about relevance.
+          </span>
+        </label>
+
+        {/* Below the thematic area, because it follows from it. This was a
+            free-text box beside the dropdown and the two said the same thing,
+            so it collected variants of the dropdown's own answer: "Pet
+            Product", "Pet Products", "Pet Device", "Pet device", "Sleep
+            Gadget", "Sleep Gadgets", "Cognitive Permance". Seventeen
+            categories for thirty-four products. */}
+        <label>
+          Category
+          <select value={values.category} onChange={(e) => updateField('category', e.target.value)}>
+            <option value="">No category</option>
+            {themes.map((theme) => (
+              <option key={theme.id} value={theme.name}>
+                {theme.name}
+              </option>
+            ))}
+            {/* A value from before the list settled stays selectable, so
+                editing an old product does not silently re-file it. */}
+            {values.category && !themes.some((theme) => theme.name === values.category) && (
+              <option value={values.category}>{values.category} (old)</option>
+            )}
+          </select>
+          <span className="product-form__hint">
+            Set from the thematic area above. Change it only if this product genuinely belongs somewhere else.
+          </span>
+        </label>
+
+        {/* The flag the site's picks row selects on. Kept here rather than in
+            WordPress because it is an editorial decision made while looking at
+            the product — and because a flag held only on the site would be
+            overwritten the next time the registry was pushed. */}
+        <label className="product-form__check">
+          <input
+            type="checkbox"
+            checked={values.isFeaturedPick}
+            onChange={(e) => updateField('isFeaturedPick', e.target.checked)}
+          />
+          Editor&rsquo;s pick
+          <span className="product-form__hint">
+            Shows this product in its category&rsquo;s picks row on EveryFiveDays, and in the combined row on the home
+            and blog pages. There is no limit — the row scrolls when it holds more than three.
           </span>
         </label>
         <label>

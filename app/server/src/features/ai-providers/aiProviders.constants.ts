@@ -25,6 +25,8 @@ export const MODEL_PURPOSES = [
   'research',
   'quality_review',
   'title_generation',
+  'meta_description',
+  'image_direction',
   'keyword_expansion',
   'image_generation',
 ] as const;
@@ -68,6 +70,18 @@ export const MODEL_PURPOSE_META: Record<
     label: 'Title Generation',
     description: 'Proposes working titles. Assignable now; not yet routed to by any workflow.',
     implemented: false,
+  },
+  meta_description: {
+    label: 'Meta Description',
+    description:
+      'Writes the search-result description for an article that already exists. Short copy, so a free model does it well. The article writer produces one as part of writing the article — this is the repair path for articles that have none.',
+    implemented: true,
+  },
+  image_direction: {
+    label: 'Image Direction',
+    description:
+      'Decides WHAT a featured image should show, by reading the article and describing one concrete scene. A text model, not an image model: the image model draws the scene this one writes. Short output, so a free model does it well.',
+    implemented: true,
   },
   keyword_expansion: {
     label: 'Keyword Expansion',

@@ -7,6 +7,7 @@ import {
   selectCandidate,
 } from './featuredImage.service.js';
 import { buildFeaturedImagePrompt } from './imagePrompt.service.js';
+import { toImageStyle } from './imageDirection.service.js';
 
 /**
  * The featured-image surface.
@@ -37,14 +38,27 @@ imagesRouter.get('/:articleId', (req, res) => {
   res.json({ featuredImage: state });
 });
 
-imagesRouter.get('/:articleId/prompt', (req, res) => {
+/**
+ * The prompt that WOULD be used.
+ *
+ * Costs a model call now, because choosing the scene is a model call — so
+ * this is a preview of the real prompt rather than a cheap reconstruction of
+ * it. `basis` says which model chose the scene, or that the deterministic
+ * path was used.
+ */
+imagesRouter.get('/:articleId/prompt', async (req, res) => {
   const articleId = parseId(req.params.articleId);
   if (articleId === null) return res.status(400).json({ errors: ['Invalid draft id.'] });
 
   const steer = typeof req.query.steer === 'string' ? req.query.steer : null;
-  const brief = buildFeaturedImagePrompt(articleId, steer);
-  if ('error' in brief) return res.status(400).json({ errors: [brief.error] });
-  res.json({ brief });
+  try {
+    const brief = await buildFeaturedImagePrompt(articleId, steer, toImageStyle(req.query.style), null, req.query.allowText === 'true');
+    if ('error' in brief) return res.status(400).json({ errors: [brief.error] });
+    res.json({ brief });
+  } catch (error) {
+    if (isGenerationError(error)) return res.status(400).json({ errors: [error.message], code: error.code });
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'Unexpected error.'] });
+  }
 });
 
 imagesRouter.post('/:articleId/generate', async (req, res) => {
@@ -55,6 +69,10 @@ imagesRouter.post('/:articleId/generate', async (req, res) => {
     const result = await generateFeaturedImages(articleId, {
       count: Number(req.body?.count) || undefined,
       steer: typeof req.body?.steer === 'string' ? req.body.steer : null,
+      style: toImageStyle(req.body?.style),
+      // The scene the editor previewed, so the picture drawn is the one read.
+      scene: typeof req.body?.scene === 'string' ? req.body.scene : null,
+      allowText: req.body?.allowText === true,
       modelId: parseId(String(req.body?.modelId ?? '')) ?? null,
       // Never defaulted to true, exactly as every other paid path.
       confirmedCost: req.body?.confirmedCost === true,

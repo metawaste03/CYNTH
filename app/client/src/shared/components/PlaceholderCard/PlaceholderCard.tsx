@@ -25,8 +25,8 @@ interface PlaceholderCardProps {
  * a Dashboard change and not a rename across the codebase.
  */
 export function PlaceholderCard({ icon, title, status, description, action }: PlaceholderCardProps) {
-  return (
-    <article className="placeholder-card">
+  const inner = (
+    <>
       <div className="placeholder-card__icon">
         <Icon name={icon} />
       </div>
@@ -36,12 +36,27 @@ export function PlaceholderCard({ icon, title, status, description, action }: Pl
       </div>
       <div className="placeholder-card__footer">
         <span className="placeholder-card__status">{status}</span>
-        {action && (
-          <Link className="placeholder-card__action" to={action.to}>
-            {action.label}
-          </Link>
-        )}
+        {action && <span className="placeholder-card__action">{action.label}</span>}
       </div>
-    </article>
+    </>
+  );
+
+  /**
+   * THE WHOLE CARD IS THE TARGET, not the small link in its corner.
+   *
+   * Reported plainly: "I want it to be clickable when I click on it." The card
+   * looked like a button-sized thing and behaved like a paragraph with a link
+   * in it, so the obvious click — anywhere on the card — did nothing. A card
+   * with nowhere to go stays an article element, because making a dead card
+   * look clickable would be the same mistake in reverse.
+   */
+  if (!action) {
+    return <article className="placeholder-card">{inner}</article>;
+  }
+
+  return (
+    <Link className="placeholder-card placeholder-card--link" to={action.to}>
+      {inner}
+    </Link>
   );
 }

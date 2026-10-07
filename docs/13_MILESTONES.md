@@ -2764,3 +2764,1233 @@ So the remaining gap is narrower than it first appeared:
 2. **Extraction.** `httpRetriever.ts` pulls only `<title>`. Everything else on
    the `parse_html.py` checklist — meta description, canonical, headings,
    links, images, schema, OpenGraph, hreflang — has to be written.
+
+---
+
+## Milestone 35 — The Description That Never Arrived (Complete, 2026-09-13)
+
+Reported as: "CYNTH when creating the article only uses the 'What's it for' &
+'The problem it solves' info and misses out both short & long descriptions."
+
+Half right, and the half that was right mattered a great deal.
+
+### One `??` discarded most of what was known about every product
+
+`generationContext.service.ts` resolved the two description fields into one:
+
+```ts
+description: product.shortDescription ?? product.description,
+```
+
+So a product with **both** — the normal case, since research fills both — sent
+the writer the short one and silently dropped the long one. The short
+description did reach the writer, labelled "Description", which is why the
+report was half right. The long description never did.
+
+Measured on the four products of the live litter-box article:
+
+| Product | Short | Full (discarded) |
+|---|---|---|
+| Cumrige Automatic Litter Box | 248 | **958** |
+| UPFAS Automatic Litter Box | 261 | **932** |
+| Amazon Basics Large Litter Box | 247 | **722** |
+| Dr. Elsey's Ultra UnScented | 235 | **819** |
+| **Total** | 991 | **3,431** |
+
+The writer was receiving 991 characters of description and losing 3,431 —
+roughly **four and a half times more than it got**. The long description is
+where the specifics live: capacities, materials, dimensions, compatibility.
+Exactly the detail that separates a useful product paragraph from a vague one.
+
+### The fix
+
+The two fields are now carried apart, because they are not two versions of the
+same text:
+
+- **`shortDescription`** — the editor's summary line, written for a card.
+- **`description`** — the full detail, usually the longest thing known.
+
+Every consumer now chooses deliberately instead of inheriting a coalesce:
+
+| Consumer | Uses |
+|---|---|
+| Writer prompt (pipeline) | **both**, as `Summary:` and `Full description:` |
+| Writer prompt (manual wizard) | **both**, same labels |
+| Published card (`productCard.ts`) | `useCase ?? shortDescription ?? description` |
+| Preview card (`ArticleContent.tsx`) | the same precedence, deliberately |
+
+A card wants the short text. Falling back to the long one would drop a wall of
+manufacturer copy into the middle of an article, so the long description is
+reachable by a card only when nothing shorter exists at all.
+
+The long description is also not repeated under two labels when there is no
+short one, and the "nothing is recorded about this product" guard now considers
+both fields — otherwise a product described at length in one field only would
+have arrived labelled as unknown.
+
+### Framing, which matters as much as the data
+
+A long description is usually the manufacturer's own marketing copy. It is
+simultaneously the richest source of specifics available and the most likely
+thing to drag advertising language into the article. Supplying it without
+saying what it is would have been the worse outcome, so the prompt says both:
+
+> The description fields are SOURCE MATERIAL, not copy to reuse. "Full
+> description" is usually written by the manufacturer: take the specifics from
+> it — sizes, capacities, materials, what it works with — and state them in
+> your own voice. Never echo its phrasing, its superlatives or its sales
+> framing.
+>
+> Where the supplied text makes a claim you cannot check, either attribute it
+> ("the manufacturer says...") or leave it out. Do not restate a marketing
+> claim as a finding of fact.
+
+This is the same principle as the affiliate URL rule: the useful part of a
+retailer's data is taken, and the part that would compromise the article is
+explicitly refused.
+
+### Cost
+
+About 3,400 extra characters of prompt for a four-product article — roughly 850
+input tokens, under **$0.005** on the current writer. For 4.5x the product
+detail.
+
+### Tests
+
+3 new (**445 total**):
+
+1. Both descriptions reach the writer under distinct labels, and the specifics
+   that exist ONLY in the long one (`210D ripstop`, `Rated to 18 kg`) actually
+   arrive — asserting on the detail, not on the field name.
+2. The source-material framing is present, including the attribution rule.
+3. A product with only a long description is not reported as unresearched, and
+   the long text is not repeated under two labels.
+
+### Verified live
+
+`GET /articles/24/products` returns both fields for all four products, and the
+preview cards still show their short blurbs (241-280 characters each) rather
+than the manufacturer copy — so the change reaches the writer and nothing else.
+
+### Known limitations at completion
+
+1. **`bestFor` is empty on every live product**, and `keyFeatures` on most.
+   Those fields reach the writer and always did; they simply have nothing in
+   them. Filling them is editorial work, not a code change.
+2. **The legacy single-product block** in the manual prompt builder still emits
+   one `Description` line. It reads a narrower type kept only for drafts that
+   predate `article_products`, and nothing writes to it any more.
+
+---
+
+## Milestone 36 — The Meta Description, and the Slug (Complete, 2026-09-23)
+
+Reported as: every SEO ranking check flags the same two things — no meta
+description, and "The article has no slug".
+
+Both were real. They had different causes, and only one of them is fully
+closed by this milestone.
+
+### The meta description was never produced by anything
+
+`article_seo.meta_description` was reachable by exactly one route: a manual
+`PUT` from the SEO screen. No stage wrote it. Confirmed against the live
+database — **NULL on all nine generated articles**, as was `seo_title`.
+
+The writer already produces an `excerpt`, which is a different thing for a
+different reader: the excerpt is a listing blurb for someone already on the
+site; a meta description has to earn a click from a results page. Reusing one
+as the other is the obvious failure, so the prompt says so directly:
+
+> The meta description is what appears under the title in search results.
+> Write it for someone who has not clicked yet: say what the article settles
+> and who it is for, in 70-160 characters. It is NOT the excerpt reworded, and
+> it must not be a sentence lifted from the article.
+
+The writer owns it because the writer is the only stage that has read the
+finished article, and because it costs nothing — one more field in a call that
+already happens.
+
+Two rules hold it honest:
+
+- **Nothing invents one downstream.** If the model omits it the field stays
+  empty. A fabricated description is worse than letting the search engine pick
+  its own snippet from the text.
+- **A human description is never overwritten.** An editor who has written
+  their own search-result copy has made a decision, and a revision or a
+  regenerate must not silently replace it. Only an empty field is filled.
+
+### The slug was assigned by a startup backfill, and nothing else
+
+`refreshSlug()` recomputes an article's slug from its title and is correctly
+called by `saveGeneratedArticle` — the MANUAL generation path. The pipeline
+does not use that function. Its own `saveArticle()` wrote the title and never
+refreshed the slug.
+
+So a pipeline-generated article had **no slug until the server next
+restarted**, when the "articles that predate slug support" backfill happened to
+catch it. That backfill masked the bug for every older article and left the
+newest one bare — which is exactly what was observed: one article with a
+perfect title and `slug = NULL`.
+
+`saveArticle()` now calls `refreshArticleSlug()`, so the slug exists the moment
+the article has a title. `refreshSlug` was exported for this; it previously had
+no callers outside its own file.
+
+### What a slug is, and why it matters here
+
+The slug is the part of the URL that identifies the page —
+`everyfivedays.com/**automatic-litter-box-buyers-guide**/`. Cynth derives it
+from the title and sends it to WordPress on push. Without one, WordPress
+invents its own from whatever title it receives, which means the URL is decided
+by the CMS rather than by the editor, and can differ from what Cynth records.
+
+### The half this milestone does NOT close
+
+**Cynth cannot push a meta description to WordPress, and this is not a Cynth
+limitation.**
+
+WordPress core has nowhere to put one. A meta description lives in whichever
+SEO plugin the site runs, under that plugin's own post-meta keys — Yoast, Rank
+Math, SEOPress and AIOSEO all differ. `cms/seoAdapter.ts` has held an
+intentionally empty mapping registry since Milestone 14 for exactly this
+reason, and `wordpressConnector.draftBody()` deliberately writes no SEO fields.
+
+Checked against the live site on 2026-09-23:
+
+- `https://everyfivedays.com/wp-json/` lists no SEO plugin namespace. The
+  registered namespaces are oembed, novamira, duplicator, several elementor
+  ones, image-optimizer and xpro — **no Yoast, Rank Math, SEOPress or AIOSEO.**
+- The homepage `<head>` contains **no `<meta name="description">` and no
+  `og:description`** at all.
+
+So the site currently publishes no meta descriptions from any source, which is
+why the ranking check reports it. Cynth now has the text; there is nowhere on
+the site to put it yet.
+
+When an SEO plugin is chosen, the work is one `SeoFieldMapping` registered in
+`seoAdapter.ts` plus applying it in `draftBody()`. The seam was built for this
+and nothing else in Cynth changes.
+
+### Tests
+
+3 new (**448 total**):
+
+1. A generated article gets both a slug and a meta description — and the
+   description is asserted NOT to equal the excerpt, which is the failure this
+   would most likely regress into.
+2. A hand-written meta description survives a full review-and-revision cycle.
+3. The writer prompt actually explains what a meta description is for; its
+   absence would be a silent quality regression rather than a visible failure.
+
+### Known limitations at completion
+
+1. **Existing articles have no meta description.** Nine of them. Producing one
+   means re-running a writer that has already been paid for, so nothing was
+   backfilled automatically. A cheap dedicated backfill pass would be a small
+   piece of separate work.
+2. **The push gap above**, pending an SEO plugin decision.
+3. **`seo_title` is still never generated.** The same gap as the meta
+   description, and deliberately not fixed in the same pass: an SEO title is
+   only worth setting when it differs from the editorial title, and Cynth
+   already states that the article title stands in when none is set. Worth
+   revisiting once real SERP data exists.
+
+---
+
+## Milestone 37 — Rank Math, and the Meta Description Backfill (Complete, 2026-09-23)
+
+Rank Math was chosen and installed. This wires Cynth to it, and fills in the
+meta descriptions of every article written before Milestone 36.
+
+### What Rank Math was already doing
+
+Worth stating, because it changes what "fixed" means here. Checked against the
+live site: a published post already had a meta description —
+
+> A laptop cannot put the screen and the keyboard in the right place at the
+> same time. Here are the three honest ways around that, ranked…
+
+That is **Cynth's excerpt, verbatim**. Rank Math's default description template
+is `%excerpt%`, and Cynth already pushes an excerpt, so posts were getting a
+description by fallback. Functional, but it is the listing blurb doing a job it
+was not written for — exactly the conflation Milestone 36 separated.
+
+So the goal was not "produce a description where there was none", it was
+"replace the fallback with copy written for a results page".
+
+### The mapping
+
+`cms/seoAdapter.ts` held a deliberately empty registry from Milestone 14. It
+now holds one entry, for Rank Math's four post-meta keys:
+
+| Cynth | Rank Math |
+|---|---|
+| `metaDescription` | `rank_math_description` |
+| `seoTitle` | `rank_math_title` |
+| `canonicalUrl` | `rank_math_canonical_url` |
+| `targetQuery` | `rank_math_focus_keyword` |
+
+Only non-empty values are emitted. An empty string would overwrite something a
+human had written in Rank Math's own editor, which is the one outcome worse
+than sending nothing.
+
+**Which mapping applies is configuration, not assumption.** A new
+`cms_connections.seo_target` column names the plugin per connection; a null or
+unrecognised target selects no mapping and sends no plugin fields, which is
+exactly what every connection did before. A typo degrades to "no SEO fields",
+never to wrong ones.
+
+### The precondition, which is on the WordPress side
+
+Rank Math does not register its meta keys with `show_in_rest`. Verified
+directly: `GET /wp-json/wp/v2/posts?_fields=meta` returns only `footnotes`.
+**WordPress silently drops unregistered meta keys** — no error, no effect, a
+push that looks like it worked.
+
+`docs/rank-math-rest-meta.php` is the mu-plugin that registers the four keys.
+It is deliberately narrow:
+
+- `auth_callback` requires `edit_post` — the same permission WordPress already
+  requires to edit the post. It grants no access anyone did not have.
+- It registers only the four keys Cynth writes. Every other Rank Math field
+  stays editable only in Rank Math's own interface.
+- It reads, changes and deletes nothing. Registration only.
+
+Until that file is installed at `wp-content/mu-plugins/`, the mapping produces
+fields WordPress ignores.
+
+### The backfill
+
+A `meta_description` model purpose, routed to a free model, that reads a
+finished article and writes one description. **It is a repair path, not the
+default** — see the note below.
+
+Rules it inherits rather than reinvents: it routes through the Model Router, it
+passes the same spend gate, and **it never overwrites a description that
+exists**. An article that already has one is refused rather than rewritten,
+which is what makes "run it over everything" safe.
+
+Run over all nine existing articles on `inclusionai/ling-3.0-flash-fin:free`:
+**9 written, 0 failed, at no cost.** Every description landed between 127 and
+159 characters.
+
+#### One defect found and fixed in the same pass
+
+Three of the first nine were cut mid-word — *"...when the tracking itself
+becomes count"* — because the cleaner ended in a hard `slice(0, 160)`. That
+reads as broken rather than as shortened.
+
+`trimToLimit()` now prefers the last complete sentence that fits, falls back to
+the last whole word, and strips a dangling comma or hanging conjunction. The
+three affected descriptions were cleared and rewritten; all three now end
+properly.
+
+### Why the free model is NOT the default for new articles
+
+The question was whether to make this the standard path going forward. It
+should not be, and the reasoning is worth recording because it is not obvious:
+
+- **The writer already produces one for nothing.** It is one more field in a
+  call that is already being made and paid for. A separate pass cannot be
+  cheaper than free.
+- **The writer has the best context.** It has just written the whole article.
+  The backfill model sees the title, the excerpt and the first 700 words.
+- **A separate call is a separate failure mode.** Another request, another
+  timeout, another rate limit, another stage that can leave an article
+  half-finished — to replace something that already works.
+- **Free models here have a record of returning empty.** That is why guided
+  runs kept failing in Development mode.
+
+The right shape is the one built: **the writer produces it by default, and the
+free-model pass repairs anything that lacks one.** That also covers the
+"moving forward" worry — if the writer ever omits a description, the backfill
+fills it, on demand, for nothing.
+
+### Tests
+
+5 new (**453 total**): the cleaner strips quoting and labels; an over-long
+description trims at a boundary rather than mid-word; a short one is untouched;
+the Rank Math mapping emits only fields that have values; an unknown target
+selects no mapping.
+
+**One existing test was rewritten rather than deleted.** It asserted the
+mapping registry was EMPTY — correct while no stack had been chosen. The
+guarantee it protected still holds and is now stated directly: a mapping exists
+only for a target a connection explicitly names, and an unnamed or unknown
+target selects nothing.
+
+### Known limitations at completion
+
+1. **The mu-plugin is not installed.** Until it is, `rank_math_description` is
+   sent and ignored, and Rank Math keeps using its `%excerpt%` fallback.
+2. **`seo_target` has no UI yet.** It is set per connection in the database;
+   the connection form does not expose it. All three WordPress connections were
+   set to `rankmath`.
+3. **`seo_title` is still never generated**, so `rank_math_title` is only ever
+   sent when a human has written one. Unchanged from Milestone 36.
+
+---
+
+## Milestone 38 — SEO Title, Focus Keyword, and Metadata-Only Push (Complete, 2026-09-23)
+
+Four things, from four questions.
+
+### 1. The HTML encoding worry was mine, and it was wrong
+
+I flagged `â€"` in the pushed content and said it might be mojibake. Checked
+properly at byte level:
+
+- **Database**: zero mojibake sequences, 138 real em dashes across nine
+  articles.
+- **Live page**: decodes as clean UTF-8, 24 `E2 80 94` em-dash sequences, zero
+  `C3 A2 E2 82 AC` mojibake sequences.
+
+The mangling was in my own terminal display pipeline, not in the content.
+Recorded because "I raised it, I checked it, it is not real" is worth as much
+as a fix.
+
+### 2. An SEO title is not wrong — it was needed
+
+The question was whether Cynth writing one is a mistake. Measured on the nine
+real articles:
+
+| | |
+|---|---|
+| Titles over the ~60 characters a search result shows | **8 of 9** |
+| Longest | 100 characters (CGMs Without Diabetes) |
+| Only one that fits | 38 characters (7 Best Budget Hiking Backpacks) |
+
+Eight of nine were being cut off mid-word in search results. The two titles do
+different jobs and the architecture already separated them: the editorial
+title is the H1 and can take the space it needs to be precise; the SEO title
+has about 60 characters to earn a click.
+
+The writer now produces one, the same way it produces the meta description —
+one more field in a call already being made. With two rules:
+
+- **An over-long one is discarded, not truncated.** Cynth already falls back
+  to the article title when the field is empty, so storing a bad SERP title is
+  worse than storing none.
+- **One identical to the headline is discarded too.** It would be a second
+  field to maintain that makes the result no better.
+
+### 3. The focus keyword had nothing to grade
+
+Rank Math scores a post against its focus keyword, which Cynth sends from
+`article_seo.target_query`. **Eight of nine articles had that field NULL**, so
+Cynth sent no focus keyword and Rank Math had nothing to grade.
+
+The cause was a gap between two features that never spoke: the keyword stage
+writes to the `keywords` table, and the SEO engine reads `article_seo` — and
+nothing bridged them. The pipeline now fills the SEO configuration from what
+the keyword stage already decided: target query, secondary keywords, semantic
+topics and audience.
+
+Free, since the stage has already run, and it cannot disagree with the stored
+keywords because it is written from the same object. **Never over the top of a
+human**: a target query an editor has set is what the article competes for,
+and a rerun leaves it alone.
+
+### 4. The canonical URL is deliberately left empty
+
+Asked to do what is best technically, and the best thing here is nothing.
+
+For an ordinary post on one site, the canonical URL is the post's own
+permalink, and Rank Math emits that automatically. Writing one from Cynth
+would at best duplicate what the plugin already does correctly.
+
+At worst it does real harm. A canonical pointing at the wrong URL tells Google
+to index that other page *instead of this one* — a wrong canonical can remove
+a page from search results entirely. It is worth setting only for syndicated
+or deliberately duplicated content, which is a judgement about publishing
+strategy rather than something to derive from an article record.
+
+So `rank_math_canonical_url` stays empty unless a human fills it, and that is
+the correct outcome rather than an unfinished one.
+
+### 5. Metadata-only push — the third option, built
+
+Cynth refuses to modify published CONTENT, and that rule is right. But it made
+the SEO metadata feature useless on exactly the articles that matter: five of
+six live articles were already published, so their meta descriptions could
+never be sent.
+
+`pushSeoMetadata()` is the narrow path. **A meta description is not content**
+— no reader sees it on the page — so writing one to a published post changes
+nothing a reader can observe and does not touch its published state.
+
+Narrow by construction rather than by promise: `updateSeoMetadata()` on the
+connector builds a request body containing `meta` and nothing else. There is
+no code path in it that can send a title, a body, an excerpt, a slug or a
+status.
+
+**Proven against the live site**, on both kinds of post:
+
+| Post | Status | Result |
+|---|---|---|
+| 346 | draft | `rank_math_description` written |
+| 344 | **published** | `rank_math_description` written, still published, body unchanged (3,545 words) |
+
+### One thing to know: Hostinger caches the rendered page
+
+After writing to post 344, the stored meta was correct — verified by reading it
+back authenticated — but the public page still served the OLD description.
+That is `hcdn`, Hostinger's CDN, serving cached HTML; a `?nocache=` query
+string did not bypass it.
+
+So the sequence is: Cynth writes → WordPress stores → **the page updates when
+the cache is purged or expires.** Purging is a Hostinger-side action. Anyone
+verifying this work should read the post meta over the REST API rather than
+scraping the rendered page, or they will conclude a correct write failed.
+
+### Tests
+
+4 new (**457 total**): a long headline gets a short SERP title that is not the
+headline again; an over-long SERP title is discarded rather than stored; the
+pipeline fills the SEO target query from the keyword stage; a target query the
+editor set survives a rerun.
+
+### Known limitations at completion
+
+1. **No UI for the metadata-only push.** It is `POST /articles/:id/cms/push-seo`
+   with a `connectionId`. The article screen does not offer a button yet.
+2. **The eight existing articles still have no SEO title**, and no backfill
+   writes one — the meta-description backfill covers only the description.
+   Regenerating is the only current route for those.
+3. **`seo_target` still has no UI**, unchanged from Milestone 37.
+
+---
+
+## Milestone 39 — One Pass, Two Fields, and a Button (Complete, 2026-09-23)
+
+Both gaps from Milestone 38 closed, but not as the two separate features they
+were described as.
+
+### Why the backfills were merged instead of doubled
+
+The obvious reading was "add an SEO title backfill alongside the meta
+description backfill". That would have meant two near-identical services and
+**two model calls per article** for two facts derived from one reading of it.
+
+A meta description and an SEO title are the same job: how does this article
+present itself on a results page. Writing them together is cheaper, and more
+importantly it is the only way the two are guaranteed to agree with each other
+rather than being written blind of one another.
+
+So `writeMetaDescription` became `writeSearchMetadata`, which:
+
+- **Asks only for what is missing.** An article with a good description and no
+  SEO title is asked for a title alone. The prompt is built from the gaps.
+- **Asks for an SEO title only when the headline does not fit.** Below the
+  SERP limit the article title does the job, and a second field saying the
+  same thing is a field to maintain for nothing.
+- **Refuses an article that needs neither**, which is what makes "run it over
+  everything" safe without the caller filtering first.
+- **Discards an over-long SEO title rather than truncating it.** The field
+  exists *because* the editorial title is too long; a truncated one defeats
+  its own purpose, and Cynth already falls back to the article title.
+
+### The buttons
+
+Two, on the SEO panel, in their own row because they do a different kind of
+thing from analysis — analysis only reports, these two WRITE and SEND:
+
+- **Write missing search metadata** — fills empty fields only.
+- **Push SEO metadata to WordPress** — sends only the SEO fields. Safe on a
+  published post.
+
+### Run over the real articles
+
+**SEO titles, 8 candidates:**
+
+| | |
+|---|---|
+| Written first pass | 7 of 8, every one 50-57 characters |
+| Failed | 1 (article 32) — the model returned a title over the limit, which was correctly discarded rather than truncated |
+| After one retry | 8 of 8 |
+
+The failure is worth recording as a success of the rule: the model produced
+something unusable, Cynth saved nothing and said so, and a retry got a good
+one. A truncating implementation would have stored a broken title and reported
+success.
+
+Examples, against the headlines they replace:
+
+| Editorial title | SEO title |
+|---|---|
+| What Happens When You Stop Paying for Whoop, Oura, Fitbit, Garmin or Ultrahuman (80c) | What Canceling Your Recovery Wearable Really Costs (50c) |
+| How to Make a Laptop Workspace Ergonomic Without Spending Much (62c) | Your laptop posture problem, and three ways to fix it (53c) |
+| CGMs Without Diabetes: What the Sensor Measures, and the Smallest Difference It Can Honestly Resolve (100c) | What a Consumer CGM Measures, and How Precise It Really Is (58c) |
+
+**Metadata pushed to the live site: 6 of 6**, five of them PUBLISHED posts —
+the case the old content-push path could never serve. Verified by reading the
+post meta back authenticated: every one carries both `rank_math_title` and
+`rank_math_description`, and every post kept its published state.
+
+### Tests
+
+3 new (**460 total**): an SEO title is wanted only when the headline overruns;
+an article needing neither field is not a candidate; an over-long SEO title is
+discarded rather than truncated.
+
+### The focus keyword, backfilled for free
+
+The Milestone 38 fix filled `article_seo.target_query` for NEW articles only,
+which left the eight existing ones with nothing for Rank Math to grade.
+
+No model call was needed to repair them: the keyword stage had already written
+a `primary_keyword` for every one into the `keywords` table — the two tables
+simply never spoke. Copying it across, under the same "fill a blank, never
+replace a decision" rule, filled 8 and left 1 alone (article 3, which an
+editor had already set).
+
+All six live posts were then re-pushed and verified: **6 of 6 now carry
+`rank_math_title`, `rank_math_description` AND `rank_math_focus_keyword`**.
+
+### Known limitations at completion
+
+1. **The rendered pages still show the old descriptions** until Hostinger's
+   cache is purged. The stored values are correct — verify over the REST API,
+   not by scraping the page. See Milestone 38.
+2. **`seo_target` still has no UI.** Set per connection in the database.
+3. **The canonical URL is still deliberately empty**, per Milestone 38.
+
+---
+
+## Milestone 40 — The Featured Images Were Asking the Wrong Model (Complete, 2026-09-25)
+
+Reported as: the featured images are trash, the information they show makes no
+sense, and the no-real-products constraint seems to be destroying the quality.
+
+The last part was half right, and the half that was wrong matters more.
+
+### What the images actually looked like
+
+Two of the three ever generated, read back from disk:
+
+**"Creatine for Cognition"** — a floating brain dissolving into blue particles.
+The single most generic stock image in existence for anything cognitive.
+
+**"How to Make a Laptop Workspace Ergonomic Without Spending Much"** — a
+premium height-adjustable standing desk with an external monitor and an
+ergonomic office chair. Technically a clean photograph, and it **contradicts
+the article**, which is about fixing your posture for nothing using a stack of
+books.
+
+Neither is a model performing badly. Both are a model being asked the wrong
+question.
+
+### Three faults, one cause
+
+The prompt was a specification document — `=== WHAT THE ARTICLE IS ABOUT ===`,
+`=== STYLE ===`, `=== HARD RULES ===` — handed to a diffusion model.
+
+1. **Diffusion models weight tokens; they do not parse documents.** Roughly
+   half the prompt was headings and meta-instruction, diluting the subject.
+
+2. **The prohibitions were negations, aimed at the one component that cannot
+   act on them.** "Do not depict any identifiable real-world product, brand,
+   logo, packaging or trademark" pushes all five of those words into the
+   conditioning. There is no reliable NOT operator, and Cynth's image adapter
+   has no negative-prompt parameter to put them in instead.
+
+3. **Nothing decided what to DRAW.** "Something that evokes the subject" left
+   an editorial judgement to a diffusion model, which resolves it by reaching
+   for the nearest cliché. Hence the brain. Hence the desk.
+
+The article's actual content never reached the prompt at all — only its title,
+topic and theme. That is why the ergonomics image could not know the piece was
+about spending nothing.
+
+### The fix: decide first, draw second
+
+`imageDirection.service.ts` is a new stage. A **text** model reads the article
+and chooses one concrete scene. The image model then photographs that scene and
+is never asked to interpret anything.
+
+The director is told what a good choice is, in the terms that actually matter:
+
+> The image must agree with what the article actually ARGUES, not just its
+> topic. An article about doing something cheaply must not show expensive
+> equipment.
+
+And it is told which clichés to avoid **by name**, because a generic "avoid
+clichés" does nothing — the model does not know which ones it reaches for.
+Eight are listed, including the floating brain, the lightbulb, the glowing
+neural network and "an immaculate empty desk that looks like a furniture
+advertisement".
+
+### The constraints were not relaxed. They moved.
+
+This is the part the report got half right.
+
+The constraint was not the problem; **asking a diffusion model to honour it
+was**. "Do not name a real product" is trivial for a language model and nearly
+meaningless to an image model. So the rules now sit in the director's prompt,
+as instructions to something that can follow them, and the image model receives
+no prohibition list at all.
+
+One negative clause is kept in the image prompt: **no text**. That exception is
+deliberate — every image model still garbles lettering, and unlike a brand it
+cannot be prevented upstream, because a scene can be entirely text-free and the
+model will still invent a sign.
+
+A test asserts the old negation list has NOT come back.
+
+### What it produces now
+
+| Article | Before | After |
+|---|---|---|
+| Creatine for Cognition | a floating brain in blue particles | *"a half-empty tub of creatine monohydrate beside a chipped glass and a folded laundry basket… the quiet evidence of a small, unglamorous hope carried through another ordinary day"* |
+| Laptop ergonomics on no budget | a premium standing desk and ergonomic chair | *"a laptop propped open on a stack of old paperbacks, elbows lifted off the table edge, a worn cushion behind someone's lower back, a faint coffee ring beside the screen"* |
+| Automatic litter box guide | — | *"a gray cat sits rigidly beside an automatic litter box, half in and half out, one paw lifted… watching the unit with still, cautious eyes, not approaching"* |
+
+The laptop scene is the article's own central recommendation. The litter box
+scene is its actual argument — the failure mode, not a product beauty shot.
+
+Note the creatine scene contains a *product category*, unbranded. That is
+within the rule and always was; the old prompt's blanket negation was
+suppressing it for no benefit.
+
+### Order of operations, corrected
+
+Choosing the scene is now a model call, so building the prompt first would mean
+a refused image generation had still sent a request. The spend gate now runs
+**before** the director, preserving the guarantee that a refusal costs nothing
+and contacts nobody. A test caught this.
+
+### Falling back
+
+A director that cannot run does not remove the feature: generation falls back
+to a short deterministic prompt, and the brief reports `scene: null,
+directedBy: null` so a poor image is always traceable to the reason. The
+fallback is deliberately vaguer than the old prompt — with nothing deciding
+what to show, a short prompt produces a better generic image than a long one
+full of rules.
+
+### Cost
+
+**Nothing.** The director runs on `inclusionai/ling-3.0-flash-fin:free`, the
+same free model used for search metadata, under a new `image_direction`
+purpose that falls back through the other short-copy purposes if unassigned.
+
+### Tests
+
+4 rewritten, 2 new (**462 total**). The rewrites were necessary rather than
+incidental: three existing tests asserted the negation list was IN the image
+prompt, which was the defect. They now assert the opposite, plus that the
+constraints are present in the director's prompt — the guarantee was restated,
+not dropped.
+
+### Generated and checked, and it found one more defect
+
+Two real images were generated on Seedream 4.5, at $0.04 each.
+
+**The first was a large improvement and exposed a residual fault.** It showed
+a laptop raised on a stack of books on a worn kitchen table, a cushion on the
+chair, morning light — the article's own central recommendation, where the old
+image had shown a premium standing desk. But the book spines faced the camera,
+and the image model rendered **gibberish lettering** on every one.
+
+That is the failure `NO_TEXT` exists to prevent, and it proved the clause
+cannot do the job alone: telling the image model "no text" cannot save a scene
+built from objects whose whole identity is printed lettering. The fix belongs
+where the scene is chosen, so the director now has an extra rule — books,
+packaging, labels and screens are allowed, but only where no lettering faces
+the camera (spines turned away, a cover edge-on, a screen dark or angled), and
+a scene that only works with its lettering visible must be replaced.
+
+**The second generation confirmed it.** Same scene, reframed: the laptop
+raised on books with a folded towel, the book *page edges* to camera rather
+than the spines, a coffee ring on the counter — and, unprompted, a separate
+external keyboard at the lower height with hands resting on it, which is the
+article's second argument (a riser alone moves the problem to your shoulders).
+No lettering anywhere in the frame.
+
+One image that states both halves of the article's advice.
+
+### Known limitations at completion
+
+1. **Seedream returns one image per request regardless of `n`.** A request for
+   two produced one, billed as one. The count parameter is sent and honoured
+   by the contract; this model appears not to implement it.
+2. **The three original images are unchanged.** Replacing them means
+   generating again, at $0.04 each.
+3. **`GET /prompt` now costs a model call**, because the prompt does not exist
+   until a scene is chosen. Free, but no longer instant.
+
+### Addendum — what twelve real images taught the director (2026-09-25)
+
+Milestone 40 was documented with a stated limitation: *no image had been
+generated with the new prompt yet*. Twelve then were, one per article, and
+they found five faults that no amount of reading the prompt would have found.
+Each is recorded with the image that produced it, because the image is the
+evidence and the rule on its own reads like fussiness.
+
+**1. Gibberish on book spines.** The director chose "a stack of old
+paperbacks" — a good scene — and the image model wrote nonsense on every
+spine. `NO_TEXT` cannot save a scene built from objects whose identity *is*
+printed lettering. Rule added: books, packaging and screens are allowed only
+where no lettering faces the camera.
+
+**2. "A ring" becomes a wedding band.** Twice. For an article on sleep
+trackers, "a thin silver ring resting on the pillow beside a sleeping person"
+is, as a photograph, an article about a marriage ending. An image model draws
+the most common thing a word can mean. Rule added: name an object by its shape
+and material, not only its category.
+
+**3. Which then produced a shop listing.** Describing form precisely pulled the
+model towards the best-known object of that shape: a studio-lit smartwatch
+beside a phone on a bare nightstand. No logo on it, and unmistakably one
+company's hardware, shot the way that company shoots it. Rule added: a device
+may appear, but never as the display piece — *if the frame would work as a
+shop listing, it is the wrong frame*.
+
+**4. An invented brand, and half a frame of mirrored gibberish.** The worst of
+the twelve. The director put "a printed subscription sheet edged with dates"
+in the scene — having been told twice not to put lettering in frame — and the
+image model printed the invented brand name **"Smatter"** across the
+appliance. This one is not a missing rule. The rule was there and was ignored,
+so it became a **check**:
+
+> `findTextRisk()` reads the chosen scene for words that carry print. If it
+> finds one, the director is shown the exact phrase it wrote and asked again,
+> up to three times, **before any image is paid for**.
+
+The asymmetry is the argument: asking the director again is free, and the
+image that would have followed costs four cents. The list is deliberately
+short — a check that rejects good scenes costs a good photograph every time
+and is invisible when it does. Bare `sheet` is not on it, because it would
+reject a bedroom scene every time; `paper` is, except for towels, bags, clips,
+cups and napkins.
+
+When all three attempts still name something printed, the scene is used anyway
+and the brief carries a `concern`. A director that cannot find a print-free
+scene is not a reason to remove featured images from an article — but a
+garbled image should be traceable rather than mysterious.
+
+**5. "Worn" compounds into squalor.** The guidance said *a worn thing on a
+kitchen table says more than a studio composition*, and "worn" plus "specific"
+produced grimy tiles, peeling laminate, stained pillowcases and sediment in a
+water bottle. Two changes: the camera clause no longer says "slightly
+imperfect" (the intent was unstyled, not unclean), and the word "worn" is no
+longer suggested to the director at all. A reader deciding what to buy should
+not be looking at a photograph that feels like bad news.
+
+### One image, not three
+
+`DEFAULT_CANDIDATES` is now 1.
+
+Seedream 4.5 returns a single image per request whatever `n` says — asking for
+three produced one, billed as one — so the old default promised a choice the
+provider never delivered. And now that the director chooses the scene, extra
+candidates are the same scene redrawn rather than competing ideas: on a
+provider that *does* honour `n`, three would be three charges for three
+near-identical photographs. The control still offers up to four.
+
+The confirmation dialog also read `MAX_CANDIDATES`, so an unspecified count
+asked the editor to approve four images and then drew one. Approving a figure
+you are not charged is the wrong way round even when it errs cheap.
+
+### What the twelve cost, and what they produced
+
+**$0.48**, all on Seedream 4.5 at $0.04 each. Nine articles have a candidate
+or an attached image; five of the twelve were retries after a fault above.
+
+| Article | Scene |
+|---|---|
+| Budget hiking backpacks | scuffed pack half-open on a kitchen table, dented bottle, paper map — **accepted** |
+| Laptop ergonomics | laptop on books with an external keyboard in use — **accepted** |
+| Automatic litter boxes | a cat sitting back watching the unit mid-cycle, not approaching |
+| Creatine | loose powder, a scoop and a glass of water *(was: a floating brain)* |
+| Pet-tech subscriptions | an unbranded feeder unplugged on the counter, cat waiting below |
+| Sleep tracker accuracy | a matte black band left on the pillow of an unmade bed |
+| CGMs without diabetes | a plain white sensor disc on a forearm beside a coffee mug |
+| Caffeine + L-theanine | a blank blister strip beside a mug in morning light |
+
+### Known limitations at completion
+
+1. **Grime is reduced, not eliminated.** The creatine retry still came back
+   with a chipped counter edge. The image model adds wear the scene never
+   asked for.
+2. **`concern` is carried but not yet shown in the panel.** It reaches the
+   brief; the UI does not display it.
+3. **`GET /prompt` and `POST /generate` each run the director**, so the
+   previewed scene is not the one drawn — only the same kind of scene.
+4. **Article 34 has no title**, so it is correctly refused rather than drawn.
+
+---
+
+## Milestone 41 — Illustrations, and the Image That Could Not Reach the Site (Complete, 2026-09-25)
+
+Two unrelated faults, both found by an editor looking at the result rather
+than at the code.
+
+### The image that had nowhere to go
+
+Reported as: *there's no image for "How to Make a Laptop Workspace Ergonomic
+Without Spending Much"*. In Cynth there plainly was one — attached, serving,
+correct. On the live site:
+
+```
+GET /wp-json/wp/v2/posts/344 → {"status":"publish","featured_media":0}
+```
+
+Nothing was broken. **There was no path.** The article was pushed, the image
+was chosen afterwards, and every write the WordPress connector makes to a post
+restates `status: draft` — the invariant the whole module is built around. So
+the only way to give a published article its picture would have been to
+unpublish it first.
+
+Four live posts were in that state: three with no image, and two carrying the
+pre-Milestone-40 images (including the floating brain on the creatine
+article).
+
+`pushFeaturedImage()` closes it, following `pushSeoMetadata()` exactly, and
+for the same reason: **a featured image is not the article's content.** It
+changes no word a reader reads. The connector uploads the file, points
+`featured_media` at it, and sends **no status at all** — that omission is what
+makes it safe, because WordPress then leaves the post's own status alone.
+
+A test asserts no status and no title, body, slug, excerpt or author is ever
+sent on this path.
+
+**The test harness was asserting the wrong invariant.** The fake WordPress
+demanded `status === 'draft'` on *every* post write — which would have
+rejected the metadata-only paths for doing the one thing that makes them safe.
+Corrected to what the rule actually is: Cynth never writes a status other than
+draft, and may write none.
+
+### Illustration mode
+
+An editor asked for a person deciding whether to keep paying, with a thought
+bubble over their head holding the device — and got a photograph of a band on
+a windowsill instead. Two separate faults.
+
+**The director was quietly overruling the editor.** Given a steer it did not
+like, it reverted to its own preference for the photographable. The steer is
+now stated as binding: *"That instruction is binding. Where it conflicts with
+anything below, follow the editor."*
+
+**And the medium was assumed.** Every rule in the director was written for a
+photograph, and the prompt ended "editorial photograph, natural light, shallow
+depth of field" — so a drawn idea came back as a real room with a cartoon
+pasted into it. `style` is now `photograph` (the default) or `illustration`,
+which swaps the camera clause for a drawing clause and tells the director that
+thought bubbles, cutaways and comparisons are available to it.
+
+A note on the first version of this entry, which claimed a photograph *cannot*
+carry a thought bubble. It can — a photo-illustration with a drawn bubble is
+ordinary editorial practice, and the editor said so. Both now work: the same
+request run as a photograph produced a real woman at a real kitchen table with
+a crisp white bubble above her head. Illustration mode is for ideas that have
+no physical referent at all, not for this.
+
+### An empty answer no longer costs four cents
+
+Observed on a real generation: the free director model returned an empty body,
+the director threw, and the whole article fell through to the deterministic
+fallback — which then spent $0.04 drawing *"a quiet environmental photograph
+suggesting the setting of…"*, complete with "no people in focus", contradicting
+the editor's own request for a person.
+
+Retrying the director is free. It now retries within the same loop that
+handles printed-text risk, and only falls back if three attempts come back
+empty.
+
+### Cost
+
+**$0.12** — three images at $0.04: the drawn version, the photographic version
+the editor actually wanted, and the fallback one that prompted the retry fix.
+
+### Tests
+
+472 pass. 4 new for style and the empty-answer retry, 2 new for the image
+push, and the mock's invariant restated.
+
+### Known limitations at completion
+
+1. **The style is per-generation, not remembered.** Each new generation starts
+   at Photograph.
+2. **`pushFeaturedImage` replaces, it does not clean up.** The previous
+   attachment stays in the WordPress media library.
+3. **No image has been pushed to the live site yet** — the route, the button
+   and the tests exist; sending is the editor's call.
+
+### Addendum — publishing an article removed it from Cynth (2026-09-26)
+
+Reported as: *this article isn't present on CYNTH* — about a piece that was
+there the whole time. Article 27, 9,514 characters, written on 2026-09-14 by
+`openai/gpt-5.6-sol-pro`, with a featured image attached.
+
+`DraftsPage` is the only page in Cynth that lists articles, and it asked the
+server for `status: 'draft'` and nothing else. There are exactly two statuses.
+So marking an article published did not move it somewhere else — it removed it
+from the application, reachable only by typing its URL.
+
+The page now offers **Drafts / Published / All** and is titled Articles. The
+server already supported the filter; nothing there changed.
+
+Worth naming the shape of this, because it is not a display bug. A list that
+hard-codes one value of the only field that classifies its rows will hide
+everything else, silently, and the absence looks like data loss to whoever is
+looking for it.
+
+### A false alarm, checked before reporting
+
+The published article's title came back through `curl` as
+`Â£300â€"Â£600` — the textbook double-encoding signature. Read straight out of
+SQLite by codepoint it is `£` U+00A3 and `–` U+2013: clean UTF-8, mojibake
+only in the terminal pipe. The same false alarm as the em dashes in Milestone
+39, caught the same way, and recorded here so the next look at a mangled
+pound sign starts with the bytes.
+
+---
+
+## Milestone 42 — Photographing the Topic Instead of the Argument (Complete, 2026-09-27)
+
+Reported as: three paid generations for *"Pet Tech Subscriptions: Three-Year
+Cost and What Stops Working When You Cancel"*, all producing images unrelated
+to the subject.
+
+They were not random. Asked three times through the free preview, the director
+returned the same photograph:
+
+> *"a matte-black pet feeder beside a ceramic bowl, a phone face-down"*
+> *"a matte white plastic pet feeder sits beside a ceramic bowl, a phone resting face-down"*
+> *"a square white feeder with a rounded lid beside a faded ceramic bowl, a phone screen-down"*
+
+The topic photographed; the argument absent. That article is about
+thirty-six monthly payments and a device going inert when you stop paying, and
+**no object means either of those things**. Told to "choose ONE real, specific,
+physical scene", the director could only point at the nearest object. Retrying
+could never have fixed it.
+
+### Three changes
+
+**Say what to do when the argument has no object.** Some articles argue about
+a cost mounting over years, two options compared, a service that degrades.
+Photographing the thing at rest says nothing about any of them, so the
+director is now told to show the CONSEQUENCE — the moment it reaches a person
+or an animal, the waiting, the going-without, the two states side by side.
+
+With a second line that names the tell:
+
+> If you find yourself placing the subject on a table because nothing else
+> comes to mind, that is the signal you are photographing the topic rather
+> than the argument.
+
+Re-sampled three times afterwards, all three scenes found the article's own
+strongest sentence — *"A camera going dark is an inconvenience. A feeder going
+dark is a dog who didn't eat"* — and put the dog in the frame.
+
+**The house cliché.** Reviewing the day's output: a backpack on a kitchen
+table, a wristband on a nightstand, powder on a counter, a feeder on a
+counter, a tracker on a counter. Each defensible alone; together, one
+photograph printed five times. *A single object resting on a kitchen table or
+counter, shot across the surface in window light* is now named in the banned
+list as this publication's own cliché, not a generic one.
+
+**Previewing and drawing are the same scene now.** `GET /prompt` and
+`POST /generate` each ran the director, so the scene an editor read was never
+the scene drawn — which is what turned "try again" into a four-cent lottery.
+The generate call now accepts a `scene`, and given one the director does not
+run at all. The panel's *Show the prompt first* became **Suggest a scene
+(free)**, with **Draw this scene** and **Suggest another** beneath it: ask as
+many times as you like for nothing, pay once for the one you chose.
+
+The printed-text check still runs on a supplied scene. Skipping the director
+must not skip the guard — an editor pasting "a receipt on the counter" should
+be told, not quietly charged for an image full of garbled lettering.
+
+### What it produced
+
+A dog sitting beside an empty bowl, head up, next to an unbranded automatic
+feeder with no light on it. The article's argument, in one frame.
+
+### Cost
+
+**$0.08** — two images. The first, drawn before the scene could be pinned,
+came back without the dog: a person standing in a kitchen beside an empty bowl
+and a collar that reads as a belt. That image is the case for the feature.
+
+### Tests
+
+475 pass, 3 new.
+
+### Known limitations at completion
+
+1. **Grime persists.** The accepted image has a stained tile floor the scene
+   never asked for.
+2. **Background labels are not verifiable here.** The image contains blurred
+   jars on a shelf; nothing is legible at full size, but they are labels, and
+   there is no image library installed to crop and check them properly.
+3. **A suggested scene is not stored.** Reloading the panel loses it.
+
+### Addendum — the previous batch is no longer destroyed (2026-09-27)
+
+Asked to see the earlier suggestion for the pet-subscriptions article to
+compare the two, and it did not exist. `generateFeaturedImages` called
+`discardCandidates` before writing the new batch, deleting the last one
+outright.
+
+That was the right behaviour when it was written: a batch meant three
+renderings of one idea, and choosing between candidates built from two
+different prompts is a worse problem than losing one. It stopped being right
+the moment each generation became a deliberate, paid attempt at a DIFFERENT
+idea — which is exactly what Milestone 42's free-preview loop encourages.
+
+Exactly one batch back is now kept, in `pending/superseded`, and shown in the
+panel as **Previous suggestion** with its own *Use this one instead*. Enough
+to compare two ideas; not a folder that fills with pictures nobody chose.
+
+Two details that keep it honest: a kept image is selectable, so preferring the
+earlier idea is one click and not a regeneration; and *Discard all* takes the
+kept copy too, because discarding should mean discarding rather than leaving a
+back door.
+
+---
+
+## Milestone 43 — Every Product Button Said "Check Price" (Complete, 2026-09-28)
+
+Reported as: the cards in the pushed articles read "Check price" instead of
+"Shop on Amazon".
+
+Nothing was broken on the site. Its shortcode already holds the right map:
+
+```php
+const VENDORS = array(
+    'amazon' => array( 'Shop on Amazon', 'efd-product-card--amazon' ),
+);
+const VENDOR_FALLBACK_LABEL = 'Check price';
+```
+
+That fallback is deliberate and correct — never claim a shop you cannot name.
+It was firing because **Cynth never sent a vendor**. The `products.vendor`
+column existed, `renderProductCard` read it, and a comment in that file
+asserted the value was "derived from a URL host". Nothing had ever written to
+it. All 22 rows were NULL, so no card carried a `vendor=` attribute, so every
+button on the site took the fallback.
+
+A comment describing behaviour that was never implemented is worse than no
+comment: it stops the next reader looking.
+
+### Read from the link, never guessed
+
+`vendor.service.ts` derives the retailer from the host of the affiliate URL —
+the one authoritative statement of where a reader is being sent. The URL
+itself is parsed and nothing else: not rewritten, not canonicalised, not
+appended to.
+
+A host that identifies no shop returns null, and the card then carries no
+vendor at all. Shorteners (`bit.ly`), affiliate networks (`awin1.com`,
+`linksynergy.com`), IP addresses and unparseable strings all take that path,
+because a wrong shop name on an affiliate button is worse than a neutral one.
+
+### Naming a retailer nobody has listed yet
+
+The requirement was "later, when I add other companies, it should say the
+exact platform". That cannot depend on somebody editing a map first, so two
+attributes go out:
+
+- **`vendor`** — the slug the site's map is keyed by. A match brings the
+  retailer's styling, which Cynth cannot supply.
+- **`cta`** — the exact wording, `Shop on Argos`, so a shop the site has never
+  heard of is still named on the button.
+
+Display names come from the domain, with a five-entry correction map for the
+ones title-casing gets wrong: Best Buy, eBay, AliExpress, B&H Photo, John
+Lewis.
+
+### The site derives it too, and that is the half that matters today
+
+New pushes carry the attributes. **Already-published articles cannot**: their
+shortcodes were written before the fix, and Cynth deliberately refuses to
+rewrite the body of a published post.
+
+So `efd-site.php` now falls back to reading the host of the `url` attribute it
+already receives. Every card that is already live starts naming its shop with
+no article re-pushed and no content touched — which is the only way to fix
+five published posts under a rule that forbids editing them.
+
+### Backfill
+
+21 of 22 products filled at startup. The twenty-second has no affiliate link
+at all and correctly stays null.
+
+### Tests
+
+486 pass, 9 new. One existing test was restated rather than deleted: it
+asserted that a null vendor produces no attribute, which *was* the defect. It
+now asserts the fallback to the link, and keeps the guarantee that matters —
+an unidentifiable link still produces nothing.
+
+### Known limitations at completion
+
+1. **`efd-site.php` has not been deployed.** The file is updated in the
+   EveryFiveDays working copy; uploading it to Hostinger is a manual step, and
+   until it happens the live buttons still read "Check price".
+2. **No PHP is installed on this machine**, so the change was verified by
+   reading and by brace/paren balance, not by `php -l`.
+3. **An unlisted retailer gets the house accent**, not its own styling. That
+   needs a row in the site's `VENDORS` map — the wording is right without one.
+
+### Addendum — PHP, and the registry Cynth could not write (2026-09-28)
+
+**PHP 8.3.35 is installed** at `C:\tools\php`, unpacked from the official
+Windows zip (SHA-256 verified against `windows.php.net/downloads/releases/sha256sum.txt`).
+No installer, no PATH entry, no admin rights; deleting the folder removes it.
+
+It earned its place immediately. `efd-site.php` — already uploaded to
+Hostinger — lints clean, and a reflection harness exercised
+`EFD_Site::vendor_from_url` against 13 real cases: every Amazon shape in the
+library resolves to `amazon`, unlisted retailers resolve to themselves
+(`argos`, `chewy`, `zooplus`), and shorteners, affiliate networks, IP
+addresses and unparseable strings all resolve to nothing. That is verification
+rather than inference, which is what the previous entry had to settle for.
+
+### The registry had no way to be written from Cynth
+
+The site's product registry wins over a placement for the affiliate URL and
+the image — deliberately, so a changed link is fixable in one place. But the
+only thing that could FILL it was `export-products.php`, which reads a
+WordPress install. Nothing created entries from Cynth, where products are
+actually maintained. So 11 of 22 products had no entry, and their cards
+published with no picture — visible on the ergonomics article, whose card
+renders with no `<img>` at all.
+
+`npm run export:registry` writes `products/registry.json` and stages the image
+files. Two decisions in it are worth keeping:
+
+**It sends only what Cynth knows.** The importer writes every meta key it is
+handed, so an empty value would blank the live entry. `efd_image_url` and
+`efd_image_id` are set by the importer for the install it imports INTO, and
+sending them empty would have erased the picture from every product already on
+the site. Empty values are omitted entirely.
+
+**Its dry run only reports what it would actually change.** Comparing whole
+meta objects called all twelve existing products "changed" the moment the
+exporter stopped emitting an image URL — a difference in the file that writes
+nothing to the site. A dry run that cries wolf is a dry run nobody reads.
+
+Result: 13 new entries, 9 genuinely changed (all `efd_summary`, the registry's
+fallback wording, which a placement's own summary overrides anyway).
+
+### Two latent faults found on the way
+
+`import-product-images.php` still pointed at
+`C:/Users/MetaWaste/Desktop/CLAUDE/CYNTH/database/` — the path from before
+OneDrive's Known Folder Move. It would have reported "no images" rather than
+failing, so the staleness was invisible. Corrected to `C:/CYNTH/database/`.
+
+`deploy.mjs` resolved manifest images only against the local WordPress uploads
+folder, which is the wrong place for images that come from Cynth. It now
+prefers `products/media` beside the manifest, so a repo-only export never has
+to write into a running install.
+
+### Not done
+
+**Nothing has been pushed.** The manifest and 25 staged images are written;
+`node scripts/deploy.mjs products` (dry run) then `--apply` is the step that
+touches the live site, and that is the editor's call.

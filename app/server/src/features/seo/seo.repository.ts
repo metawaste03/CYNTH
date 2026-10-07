@@ -21,6 +21,7 @@ import type {
   SeoScore,
   StoredSeoFinding,
 } from './seo.types.js';
+import { SEO_TITLE_MAX_CHARS } from './seo.constants.js';
 import type { SearchIntent, SeoCategory, SeoDimension, SeoElement, SeoOrigin, SeoSeverity } from './seo.constants.js';
 
 /**
@@ -1059,4 +1060,46 @@ export function listArticleSeoSummaries(limit = 200): ArticleSeoSummary[] {
     blockingCount: Number(row.blocking_count ?? 0),
     warningCount: Number(row.warning_count ?? 0),
   }));
+}
+
+/**
+ * Generated articles missing any of their search-result metadata.
+ *
+ * Two different absences, and the second is conditional. A missing meta
+ * description always counts. A missing SEO title counts only when the
+ * editorial title is longer than a search result shows — below that length
+ * the article title does the job, and a second field would say the same
+ * thing.
+ *
+ * An article without generated content is excluded: there is nothing to
+ * describe.
+ */
+export function listArticlesMissingSearchMetadata(): {
+  id: number;
+  title: string;
+  needsDescription: boolean;
+  needsSeoTitle: boolean;
+}[] {
+  const db = getDatabase();
+  const rows = db
+    .prepare(
+      `SELECT a.id,
+              COALESCE(NULLIF(TRIM(a.title), ''), NULLIF(TRIM(a.generated_title), ''), 'Untitled') AS title,
+              COALESCE(TRIM(s.meta_description), '') AS meta_description,
+              COALESCE(TRIM(s.seo_title), '') AS seo_title
+         FROM articles a
+         LEFT JOIN article_seo s ON s.article_id = a.id
+        WHERE a.content IS NOT NULL AND TRIM(a.content) != ''
+        ORDER BY a.id`,
+    )
+    .all() as unknown as { id: number; title: string; meta_description: string; seo_title: string }[];
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      title: row.title,
+      needsDescription: !row.meta_description,
+      needsSeoTitle: !row.seo_title && row.title.length > SEO_TITLE_MAX_CHARS,
+    }))
+    .filter((row) => row.needsDescription || row.needsSeoTitle);
 }

@@ -1,3 +1,5 @@
+import { runSeoRevision } from './seoRevision.service.js';
+import { applyApprovedInternalLinks } from './internalLinks.service.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import * as repo from './seo.repository.js';
@@ -10,6 +12,8 @@ import { getGateCriteria, saveGateCriteria } from './seoGate.service.js';
 import { getSeoStatusForArticle, SEO_STATUS_META } from './seoStatus.service.js';
 import { validateGateCriteria, validateSeoConfiguration, validateSeoMetadata } from './seo.validation.js';
 import { isGenerationError } from '../generation/generation.errors.js';
+import { backfillSearchMetadata, writeSearchMetadata } from './metaDescription.service.js';
+import { listArticlesMissingSearchMetadata } from './seo.repository.js';
 import { getArticleById } from '../articles/articles.repository.js';
 import { coverageByTheme, listCoverage } from '../articles/coverage.service.js';
 import { findInboundLinkOpportunities, toInboundLinkInputs } from './seoLinks.service.js';
@@ -233,6 +237,32 @@ seoRouter.patch('/findings/:id', (req, res) => {
   res.json({ finding });
 });
 
+/**
+ * Applies every actionable finding to the article, in ONE model call.
+ *
+ * The gap it closes: the Findings panel listed warnings with no way to act on
+ * them, because nothing in Cynth could edit a written article. Metadata
+ * findings already had a path; body-text findings had none, and on a real
+ * article those were 13 of 17.
+ *
+ * Paid, editor-triggered, and outside the pipeline's one-revision cap — which
+ * governs what Cynth does on its own, not what an editor asks for.
+ */
+seoRouter.post('/articles/:id/apply-findings', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  try {
+    const result = await runSeoRevision(id, { confirmedCost: req.body?.confirmedCost === true });
+    res.json({ result, seo: repo.getArticleSeo(id) });
+  } catch (error) {
+    if (isGenerationError(error)) {
+      return res.status(error.httpStatus ?? 400).json({ errors: [error.message], code: error.code });
+    }
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'The revision failed.'] });
+  }
+});
+
 /* ---------------------------------------------------- recommendations --- */
 
 /**
@@ -283,6 +313,56 @@ seoRouter.patch('/recommendations/:id', (req, res) => {
       ? 'Approved. There is no proposed value to apply — write the field yourself under SEO metadata.'
       : 'Approved and recorded. Cynth does not edit article content, so nothing was changed in the article.',
   });
+});
+
+/* --------------------------------------------- the meta description --- */
+
+/**
+ * Which generated articles have no meta description.
+ *
+ * Free, and read-only. The backfill below is driven from this list rather than
+ * from "every article", so nothing that already has a description is ever a
+ * candidate for being given another one.
+ */
+seoRouter.get('/meta-description/missing', (_req, res) => {
+  res.json({ articles: listArticlesMissingSearchMetadata() });
+});
+
+/**
+ * Writes the meta description for one article that has none.
+ *
+ * Refused when the article already has one. Replacing an existing description
+ * is a deliberate act: clear the field first.
+ */
+seoRouter.post('/articles/:id/meta-description', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  try {
+    res.json({ result: await writeSearchMetadata(id, { confirmedCost: req.body?.confirmedCost === true }) });
+  } catch (error) {
+    respondToSeoError(res, error);
+  }
+});
+
+/**
+ * Writes a meta description for every generated article that has none.
+ *
+ * Sequential, and one failure does not stop the rest — the response says
+ * exactly which articles were written and which were not.
+ */
+seoRouter.post('/meta-description/backfill', async (req, res) => {
+  const requested = Array.isArray(req.body?.articleIds)
+    ? (req.body.articleIds as unknown[]).map(Number).filter((id) => Number.isInteger(id) && id > 0)
+    : null;
+
+  const ids = requested?.length ? requested : listArticlesMissingSearchMetadata().map((a) => a.id);
+
+  try {
+    res.json({ result: await backfillSearchMetadata(ids, { confirmedCost: req.body?.confirmedCost === true }) });
+  } catch (error) {
+    respondToSeoError(res, error);
+  }
 });
 
 /* --------------------------------------------------------------- links --- */
@@ -345,9 +425,38 @@ seoRouter.patch('/internal-links/:id', (req, res) => {
   const link = repo.setInternalLinkStatus(id, status);
   if (!link) return res.status(404).json({ errors: ['Link opportunity not found.'] });
 
-  // Approval records a decision. Nothing is inserted into the article: the
-  // link travels as SEO metadata, and the article body is untouched.
+  // Approval records the decision and nothing more. Writing the link into the
+  // body is a separate step — `apply-internal-links` below — because it is a
+  // paid model call and an edit to a finished article, and neither should
+  // happen as a side effect of ticking a box.
   res.json({ link, insertedIntoArticle: false });
+});
+
+/**
+ * Writes every approved internal link into the article body, in ONE call.
+ *
+ * The gap it closes: approving an internal link did nothing at all. Ten
+ * approved links across six articles had produced zero links in those six
+ * bodies.
+ *
+ * Only links whose target is publicly readable on the live site get placed;
+ * the rest come back in `held`, each with its reason. The body changes, so the
+ * result says `articleChanged` — the article has to be pushed again before the
+ * links exist for a reader.
+ */
+seoRouter.post('/articles/:id/apply-internal-links', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  try {
+    const result = await applyApprovedInternalLinks(id, { confirmedCost: req.body?.confirmedCost === true });
+    res.json({ result, seo: repo.getArticleSeo(id) });
+  } catch (error) {
+    if (isGenerationError(error)) {
+      return res.status(error.httpStatus ?? 400).json({ errors: [error.message], code: error.code });
+    }
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'Placing the links failed.'] });
+  }
 });
 
 seoRouter.patch('/external-sources/:id', (req, res) => {

@@ -217,7 +217,13 @@ export interface InternalLinkOpportunity {
   relevance: number | null;
   confidence: number | null;
   origin: SeoOrigin;
-  status: 'proposed' | 'approved' | 'rejected';
+  /**
+   * 'inserted' is the terminal state, and it means the link is really in the
+   * body — set only after the revised article has been read back and found to
+   * contain the URL. 'approved' on its own now means "agreed, not yet placed",
+   * which is what it always silently meant.
+   */
+  status: 'proposed' | 'approved' | 'rejected' | 'inserted';
   createdAt: string;
 }
 

@@ -157,7 +157,13 @@ export function deleteLink(articleId: number, connectionId: number): boolean {
 
 /* --------------------------------------------------------------- history --- */
 
-export type CmsPushOperation = 'create' | 'update' | 'test' | 'refresh';
+/**
+ * `update_published` is recorded distinctly from `update` on purpose: the
+ * history is the audit trail for "who replaced what a reader was seeing", and
+ * collapsing it into an ordinary update would hide exactly the events anyone
+ * would come here to find.
+ */
+export type CmsPushOperation = 'create' | 'update' | 'update_published' | 'test' | 'refresh';
 
 export interface RecordPushInput {
   articleId: number | null;

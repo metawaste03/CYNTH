@@ -590,6 +590,9 @@ CREATE TABLE IF NOT EXISTS cms_connections (
   description TEXT,
   -- The site root, e.g. http://everyfivedays.local. Never hardcoded anywhere.
   base_url TEXT NOT NULL,
+  -- Which SEO plugin this connection writes metadata into, e.g. 'rankmath'.
+  -- NULL means none chosen, and no plugin fields are sent.
+  seo_target TEXT,
   auth_method TEXT NOT NULL DEFAULT 'application_password',
   username TEXT,
   -- The NAME of the env var holding the secret. Never the secret.
@@ -939,8 +942,12 @@ CREATE TABLE IF NOT EXISTS seo_internal_links (
   relevance REAL,
   confidence REAL,
   origin TEXT NOT NULL,
-  -- 'proposed' | 'approved' | 'rejected'. Never 'inserted' — this milestone
-  -- has no code that writes a link into an article.
+  -- 'proposed' | 'approved' | 'rejected' | 'inserted'.
+  --
+  -- 'inserted' arrived with internalLinks.service.ts, which does write the
+  -- link into the body. It is set only after the saved article has been read
+  -- back and confirmed to contain the URL, so this column never claims a link
+  -- the article does not have.
   status TEXT NOT NULL DEFAULT 'proposed',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

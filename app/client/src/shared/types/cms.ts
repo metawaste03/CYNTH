@@ -95,7 +95,8 @@ export interface ArticleCmsLink {
   lastSyncedAt: string | null;
 }
 
-export type PushMode = 'create' | 'update';
+/** `update_published` replaces an article readers can already see. */
+export type PushMode = 'create' | 'update' | 'update_published';
 
 /** Exactly what will be sent to the CMS, shown before anything is sent. */
 export interface ArticleMappingPreview {
@@ -121,6 +122,8 @@ export interface PushPreflight {
   link: ArticleCmsLink | null;
   /** What pressing the button will do. Stated explicitly so the action is never ambiguous. */
   action: PushMode | null;
+  /** True when an update would replace what readers see right now. */
+  replacesLiveArticle: boolean;
   mapping: ArticleMappingPreview | null;
   ready: boolean;
   issues: string[];

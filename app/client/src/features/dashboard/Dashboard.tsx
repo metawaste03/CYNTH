@@ -72,7 +72,11 @@ export function Dashboard() {
       icon: 'newArticle',
       title: 'Articles',
       status: liveStatus(summary?.articles.total),
-      description: 'Every article Cynth has stored, across all lifecycle states.',
+      description: 'Every article Cynth has stored, grouped by thematic area.',
+      // The only counting card that went nowhere. A total answers "how much
+      // have I made"; the question behind the click is "what, and where are
+      // the gaps", which is a per-area question.
+      action: { label: 'Browse by area', to: '/articles' },
     },
     {
       icon: 'site',

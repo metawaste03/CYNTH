@@ -9,7 +9,8 @@ import { getArticleById } from '../articles/articles.repository.js';
 import { attachMedia, createMedia, getFeaturedImage } from '../media/media.repository.js';
 import { MEDIA_IMAGES_DIR, ensureMediaUploadsDir } from '../media/media.upload.js';
 import { suggestMedia } from '../media/mediaSuggest.service.js';
-import { buildFeaturedImagePrompt } from './imagePrompt.service.js';
+import { buildFeaturedImagePrompt, describeImageBasis } from './imagePrompt.service.js';
+import type { ImageStyle } from './imageDirection.service.js';
 
 /**
  * DRAWING A FEATURED IMAGE (Milestone 25).
@@ -40,8 +41,39 @@ const IMAGE_TIMEOUT_MS = 180_000;
 /** Where candidates wait. Under the uploads root so they are servable, in their own folder so they are sweepable. */
 const PENDING_DIR = path.join(MEDIA_IMAGES_DIR, 'pending');
 
+/**
+ * Where the previous batch goes when a new one replaces it.
+ *
+ * It used to go nowhere: generating again deleted the last candidates
+ * outright. That was defensible when a batch was three images of the same
+ * idea, and stopped being defensible once each generation was a deliberate,
+ * paid attempt at a DIFFERENT idea — an editor asked to see the previous
+ * suggestion again to compare, and it no longer existed anywhere on disk.
+ *
+ * Exactly one batch back is kept. Enough to compare two ideas; not a folder
+ * that grows forever with pictures nobody chose.
+ */
+const SUPERSEDED_DIR = path.join(PENDING_DIR, 'superseded');
+
 const MIN_CANDIDATES = 1;
 const MAX_CANDIDATES = 4;
+
+/**
+ * ONE, not three (Milestone 40).
+ *
+ * Two reasons, and the second is the real one.
+ *
+ *   Seedream 4.5 returns a single image per request whatever `n` says. Asking
+ *   for three produced one image, billed as one, so the old default of three
+ *   promised a choice the provider never delivered.
+ *
+ *   And now that the art director chooses the scene, extra candidates are no
+ *   longer competing ideas — they are the same scene redrawn. On a provider
+ *   that does honour `n`, that is three charges for three near-identical
+ *   photographs. Choosing between compositions is still worth having, so the
+ *   control stays; it is simply no longer what happens by default.
+ */
+const DEFAULT_CANDIDATES = 1;
 
 export interface ImageCandidate {
   /** The filename, which is also the handle used to select or discard it. */
@@ -65,6 +97,15 @@ function ensurePendingDir(): void {
   fs.mkdirSync(PENDING_DIR, { recursive: true });
 }
 
+function ensureSupersededDir(): void {
+  ensurePendingDir();
+  fs.mkdirSync(SUPERSEDED_DIR, { recursive: true });
+}
+
+function relativeSupersededPath(filename: string): string {
+  return path.posix.join('uploads', 'media', 'pending', 'superseded', filename);
+}
+
 /** Candidate filenames carry the article id, so a sweep never touches another article's. */
 function candidatePrefix(articleId: number): string {
   return `a${articleId}-`;
@@ -85,11 +126,20 @@ export function discardCandidates(articleId: number, except?: string): number {
   let removed = 0;
   try {
     if (!fs.existsSync(PENDING_DIR)) return 0;
-    for (const name of fs.readdirSync(PENDING_DIR)) {
-      if (!name.startsWith(candidatePrefix(articleId))) continue;
-      if (except && name === except) continue;
-      fs.rmSync(path.join(PENDING_DIR, name), { force: true });
+    for (const entry of fs.readdirSync(PENDING_DIR, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.startsWith(candidatePrefix(articleId))) continue;
+      if (except && entry.name === except) continue;
+      fs.rmSync(path.join(PENDING_DIR, entry.name), { force: true });
       removed += 1;
+    }
+    // The kept copy goes too. Discarding means discarding.
+    if (fs.existsSync(SUPERSEDED_DIR)) {
+      for (const name of fs.readdirSync(SUPERSEDED_DIR)) {
+        if (!name.startsWith(candidatePrefix(articleId))) continue;
+        fs.rmSync(path.join(SUPERSEDED_DIR, name), { force: true });
+        removed += 1;
+      }
     }
   } catch {
     // An orphaned file is harmless; failing the request over one is not.
@@ -97,11 +147,65 @@ export function discardCandidates(articleId: number, except?: string): number {
   return removed;
 }
 
+/**
+ * Moves this article's current candidates aside so a new batch can replace
+ * them, keeping exactly one batch back.
+ *
+ * Never throws: a file that cannot be moved must not fail a generation the
+ * editor has already paid for.
+ */
+export function supersedeCandidates(articleId: number): number {
+  let moved = 0;
+  try {
+    const current = listCandidates(articleId);
+    if (!current.length) return 0;
+
+    ensureSupersededDir();
+    for (const name of fs.readdirSync(SUPERSEDED_DIR)) {
+      if (name.startsWith(candidatePrefix(articleId))) {
+        fs.rmSync(path.join(SUPERSEDED_DIR, name), { force: true });
+      }
+    }
+
+    for (const candidate of current) {
+      fs.renameSync(path.join(PENDING_DIR, candidate.id), path.join(SUPERSEDED_DIR, candidate.id));
+      moved += 1;
+    }
+  } catch {
+    // Nothing here is worth failing a paid generation over.
+  }
+  return moved;
+}
+
+/** The batch before this one, still choosable. Empty when there was no previous batch. */
+export function listSuperseded(articleId: number): ImageCandidate[] {
+  try {
+    if (!fs.existsSync(SUPERSEDED_DIR)) return [];
+    return fs
+      .readdirSync(SUPERSEDED_DIR)
+      .filter((name) => name.startsWith(candidatePrefix(articleId)))
+      .map((name) => {
+        const stats = fs.statSync(path.join(SUPERSEDED_DIR, name));
+        return {
+          id: name,
+          url: relativeSupersededPath(name),
+          byteSize: stats.size,
+          mimeType: name.endsWith('.jpg') ? 'image/jpeg' : name.endsWith('.webp') ? 'image/webp' : 'image/png',
+        };
+      })
+      .sort((a, b) => a.id.localeCompare(b.id));
+  } catch {
+    return [];
+  }
+}
+
 export function listCandidates(articleId: number): ImageCandidate[] {
   try {
     if (!fs.existsSync(PENDING_DIR)) return [];
     return fs
-      .readdirSync(PENDING_DIR)
+      .readdirSync(PENDING_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
       .filter((name) => name.startsWith(candidatePrefix(articleId)))
       .map((name) => {
         const stats = fs.statSync(path.join(PENDING_DIR, name));
@@ -127,6 +231,8 @@ export interface FeaturedImageState {
   /** Images Cynth already owns that fit this article, ranked and explained. */
   suggestions: ReturnType<typeof suggestMedia>;
   candidates: ImageCandidate[];
+  /** The batch before this one, kept so two ideas can be compared. */
+  superseded: ImageCandidate[];
   /** Whether a model is configured to draw one at all. */
   canGenerate: boolean;
   generationIssue: string | null;
@@ -146,6 +252,7 @@ export function getFeaturedImageState(articleId: number): FeaturedImageState | n
     // owned.
     suggestions: suggestMedia(articleId, { role: 'featured' }),
     candidates: listCandidates(articleId),
+    superseded: listSuperseded(articleId),
     canGenerate: resolution.error === null && adapterSupports,
     generationIssue: resolution.error
       ? resolution.error.message
@@ -160,6 +267,12 @@ export function getFeaturedImageState(articleId: number): FeaturedImageState | n
 export interface GenerateOptions {
   count?: number;
   steer?: string | null;
+  /** A photograph unless asked otherwise — see imageDirection.service.ts. */
+  style?: ImageStyle;
+  /** A scene the editor has already read and approved. Skips the director entirely. */
+  scene?: string | null;
+  /** Lets lettering into the frame. Only worth setting on a model that can spell. */
+  allowText?: boolean;
   modelId?: number | null;
   confirmedCost?: boolean;
 }
@@ -168,8 +281,10 @@ export async function generateFeaturedImages(
   articleId: number,
   options: GenerateOptions = {},
 ): Promise<GenerationResult> {
-  const brief = buildFeaturedImagePrompt(articleId, options.steer);
-  if ('error' in brief) throw new GenerationError('invalid_configuration', brief.error);
+  // The article has to be drawable before anything else happens, but the
+  // PROMPT is built later — see below.
+  const basis = describeImageBasis(articleId);
+  if ('error' in basis) throw new GenerationError('invalid_configuration', basis.error);
 
   const resolution = resolveProviderTarget('image_generation', options.modelId ?? null, 'featured image generation');
   if (resolution.error) throw resolution.error;
@@ -215,13 +330,30 @@ export async function generateFeaturedImages(
       decision.requiresConfirmation ? 'cost_confirmation_required' : 'paid_generation_blocked',
       decision.requiresConfirmation
         ? `Images are charged per image, so the exact cost is not known until the provider answers. ${
-            options.count ?? MAX_CANDIDATES
+            options.count ?? DEFAULT_CANDIDATES
           } image(s) will be generated on ${model.modelName}. Confirm to continue.`
         : (decision.reason ?? 'Image generation is not permitted in the current mode.'),
     );
   }
 
-  const count = Math.min(MAX_CANDIDATES, Math.max(MIN_CANDIDATES, Math.trunc(options.count ?? 3)));
+  /**
+   * The prompt is built HERE, after the gate, and the order is deliberate.
+   *
+   * Choosing the scene is itself a model call (Milestone 40). Building the
+   * prompt first would mean a refused image generation had still sent a
+   * request — which breaks the one guarantee the spend gate makes: refusing
+   * costs nothing and contacts nobody. Free or not, a refusal sends nothing.
+   */
+  const brief = await buildFeaturedImagePrompt(
+    articleId,
+    options.steer,
+    options.style ?? 'photograph',
+    options.scene,
+    options.allowText === true,
+  );
+  if ('error' in brief) throw new GenerationError('invalid_configuration', brief.error);
+
+  const count = Math.min(MAX_CANDIDATES, Math.max(MIN_CANDIDATES, Math.trunc(options.count ?? DEFAULT_CANDIDATES)));
   const startedAt = Date.now();
 
   try {
@@ -230,9 +362,10 @@ export async function generateFeaturedImages(
       { apiKey: target.apiKey, baseUrl: target.baseUrl },
     );
 
-    // A new batch replaces the last one. Keeping both would mean choosing
-    // between candidates generated from two different prompts.
-    discardCandidates(articleId);
+    // A new batch replaces the last one in the chooser — but the last one is
+    // kept aside rather than deleted. Two batches are now two different IDEAS,
+    // not two renderings of one, and an editor comparing them needs both.
+    supersedeCandidates(articleId);
     ensurePendingDir();
 
     const candidates: ImageCandidate[] = result.images.map((image) => {
@@ -324,8 +457,12 @@ export function selectCandidate(
     return { error: 'That is not a candidate for this article.' };
   }
 
-  const source = path.join(PENDING_DIR, candidateId);
-  if (!fs.existsSync(source)) return { error: 'That image is no longer available. Generate a new set.' };
+  // Either folder: a kept image an editor decides they preferred is exactly
+  // the case this is for.
+  const pending = path.join(PENDING_DIR, candidateId);
+  const kept = path.join(SUPERSEDED_DIR, candidateId);
+  const source = fs.existsSync(pending) ? pending : fs.existsSync(kept) ? kept : null;
+  if (!source) return { error: 'That image is no longer available. Generate a new set.' };
 
   const filename = `${randomUUID()}${path.extname(candidateId)}`;
   const destination = path.join(MEDIA_IMAGES_DIR, filename);

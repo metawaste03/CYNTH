@@ -10,7 +10,13 @@
     "start": "node dist/index.js",
     "test": "node --import tsx --test test/*.test.ts",
     "import:skills": "tsx scripts/import-author-skills.ts",
-    "map:authors": "tsx scripts/map-remote-authors.ts"
+    "map:authors": "tsx scripts/map-remote-authors.ts",
+    "export:registry": "tsx scripts/export-product-registry.ts",
+    "normalise:categories": "tsx scripts/normalise-product-categories.ts",
+    "align:themes": "tsx scripts/align-theme-names.ts",
+    "apply:links": "tsx scripts/apply-internal-links.ts",
+    "balance": "tsx scripts/area-balance.ts",
+    "rerun:writer": "tsx scripts/rerun-writer.ts"
   },
   "dependencies": {
     "express": "^4.19.2",

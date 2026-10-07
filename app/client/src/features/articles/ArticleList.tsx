@@ -68,6 +68,16 @@ export function ArticleList({ articles, emptyMessage, onDeleted, runs }: Article
             {/* An unfinished run points at the run, not at the empty article:
                 the article has nothing to read yet, and the run is where the
                 work actually is. */}
+            {/* THE ARTICLE NUMBER, SHOWN. Every report, script and log in this
+                project refers to an article by its id — "#28 needs a re-push" —
+                and until now that number appeared nowhere a person could see,
+                so a list of similar-looking drafts gave no way to tell which
+                one was meant. It is the id, not a display counter: the same
+                number the URL, the scripts and the push history use. */}
+            <span className="article-list__id" title={`Article #${article.id}`}>
+              #{article.id}
+            </span>
+
             <Link
               to={run ? `/generate/${run.pipelineId}` : `/articles/${article.id}`}
               className="article-list__title"

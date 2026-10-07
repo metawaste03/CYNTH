@@ -230,3 +230,13 @@
   color: var(--color-text-subtle);
   font-variant-numeric: tabular-nums;
 }
+
+/* The Cynth article number in the panel heading. Muted and normal-weight so
+   it reads as a reference beside "WordPress", not as part of the heading. */
+.wp-push__article-id {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}

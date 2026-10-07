@@ -12,6 +12,7 @@ export interface Product {
   title: string;
   brand: string | null;
   category: string | null;
+  isFeaturedPick: boolean;
   shortDescription: string | null;
   description: string | null;
   /** The user's link. Supplied by them, stored verbatim, never rewritten by research. */
@@ -49,6 +50,8 @@ export interface ProductInput {
   title: string;
   brand?: string;
   category?: string;
+  /** Show this product in its category's picks row on the site. */
+  isFeaturedPick?: boolean;
   shortDescription?: string;
   description?: string;
   affiliateLink?: string;

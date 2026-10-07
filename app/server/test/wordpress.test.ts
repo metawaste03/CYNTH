@@ -34,6 +34,7 @@ const secrets = await import('../src/shared/secrets/secretStore.js');
 const seoAnalysis = await import('../src/features/seo/seoAnalysis.service.js');
 const authorsRepo = await import('../src/features/authors/authors.repository.js');
 const mediaRepo = await import('../src/features/media/media.repository.js');
+const content = await import('../src/features/content/content.repository.js');
 const { MEDIA_IMAGES_DIR, ensureMediaUploadsDir } = await import('../src/features/media/media.upload.js');
 
 /* -------------------------------------------------------- mock WordPress */
@@ -51,6 +52,13 @@ interface MockPost {
   author?: number;
   excerpt?: string;
   featuredMedia?: number;
+  categories?: number[];
+}
+
+interface MockCategory {
+  id: number;
+  name: string;
+  slug: string;
 }
 
 interface MockMedia {
@@ -65,6 +73,8 @@ interface MockMedia {
 const state = {
   posts: new Map<number, MockPost>(),
   media: new Map<number, MockMedia>(),
+  /** The site's existing categories. Cynth may match these; it may never add one. */
+  categories: new Map<number, MockCategory>(),
   nextId: 100,
   nextMediaId: 500,
   /** Every write body the mock received, so tests can assert on what was sent. */
@@ -75,11 +85,26 @@ const state = {
   accountCanPost: true,
   /** When false the media endpoint refuses, so the "upload fails" path can be tested. */
   acceptUploads: true,
+  /** Pretends a human edited the post in WordPress at this time. */
+  modifiedOverride: null as string | null,
 };
 
 function resetMock() {
   state.posts.clear();
   state.media.clear();
+  state.categories.clear();
+  // The five areas EveryFiveDays publishes. "Sleep &amp; Recovery" is stored
+  // entity-encoded exactly as WordPress stores it, which is the whole reason
+  // the connector decodes before comparing.
+  for (const [id, name] of [
+    [11, 'Smart Pet Care'],
+    [12, 'Cognitive Performance'],
+    [13, 'Fitness Technology'],
+    [14, 'Productive Workspaces'],
+    [15, 'Sleep &amp; Recovery'],
+  ] as [number, string][]) {
+    state.categories.set(id, { id, name, slug: String(name).toLowerCase().replace(/[^a-z]+/g, '-') });
+  }
   state.nextId = 100;
   state.nextMediaId = 500;
   state.writes = [];
@@ -87,6 +112,7 @@ function resetMock() {
   state.hideRestApi = false;
   state.accountCanPost = true;
   state.acceptUploads = true;
+  state.modifiedOverride = null;
 }
 
 function send(res: http.ServerResponse, status: number, body: unknown) {
@@ -162,6 +188,28 @@ const mock = http.createServer((req, res) => {
       return send(res, 200, { id: media.id, alt_text: media.altText });
     }
 
+    // --- categories ---
+    //
+    // Read-only ON PURPOSE. There is no POST handler here, so a connector that
+    // tried to create a category would get a 404 rather than quietly adding a
+    // term nobody asked for — the "Sleeping Gadget" beside "Sleeping Gadgets"
+    // failure, caught by the shape of the mock rather than by a reviewer.
+    if (url.pathname === '/wp-json/wp/v2/categories') {
+      if (req.method !== 'GET') {
+        return send(res, 404, { code: 'rest_no_route', message: 'No route was found.' });
+      }
+      // WordPress stores a term name RAW and renders it encoded in REST
+      // output, so a search matches the decoded text while the response
+      // carries "Sleep &amp; Recovery". The mock reproduces both halves,
+      // because the connector has to survive both.
+      const search = (url.searchParams.get('search') ?? '').toLowerCase();
+      const plain = (value: string) => value.replace(/&amp;/g, '&').toLowerCase();
+      const hits = [...state.categories.values()].filter(
+        (term) => !search || plain(term.name).includes(plain(search)),
+      );
+      return send(res, 200, hits);
+    }
+
     // --- posts ---
     if (url.pathname === '/wp-json/wp/v2/posts' && req.method === 'POST') {
       if (!authorized) return send(res, 401, { code: 'incorrect_password', message: 'Incorrect password.' });
@@ -181,6 +229,7 @@ const mock = http.createServer((req, res) => {
         slug: String(body.slug ?? ''),
         author: body.author as number | undefined,
         excerpt: body.excerpt as string | undefined,
+        categories: Array.isArray(body.categories) ? (body.categories as number[]) : undefined,
       };
       state.posts.set(post.id, post);
       return send(res, 201, serializePost(post));
@@ -198,7 +247,21 @@ const mock = http.createServer((req, res) => {
 
       const body = JSON.parse(raw || '{}') as Record<string, unknown>;
       state.writes.push(body);
-      assert.equal(body.status, 'draft', 'Cynth must only ever write drafts');
+
+      /**
+       * The invariant is that Cynth never PUBLISHES — not that every write
+       * says "draft".
+       *
+       * The metadata-only paths deliberately send no status at all, and that
+       * omission is precisely what makes them safe on a live article: with no
+       * status in the body, WordPress leaves the post's own status alone. A
+       * blanket `status === 'draft'` here would have demanded the one thing
+       * those paths must not do, which is announce a status on a published
+       * post.
+       */
+      if (body.status !== undefined) {
+        assert.equal(body.status, 'draft', 'Cynth must never write a status other than draft');
+      }
 
       existing.title = String(body.title ?? existing.title);
       existing.content = String(body.content ?? existing.content);
@@ -220,7 +283,9 @@ function serializePost(post: MockPost) {
     content: { rendered: post.content, raw: post.content },
     slug: post.slug,
     link: `http://mock.local/?p=${post.id}`,
-    modified_gmt: '2026-08-27T10:00:00',
+    // Fixed and in the past, so "was this edited in WordPress since Cynth
+    // last pushed it?" answers no unless a test says otherwise.
+    modified_gmt: state.modifiedOverride ?? '2026-08-27T10:00:00',
   };
 }
 
@@ -265,13 +330,13 @@ const GENERATED_BODY = [
  * actually has. The analysis is deterministic only, so NO AI PROVIDER IS
  * CONTACTED and nothing here can cost money.
  */
-async function makeGeneratedArticle(title: string, authorId: number | null = null) {
+async function makeGeneratedArticle(title: string, authorId: number | null = null, themeId: number | null = null) {
   const article = articlesRepo.createArticleDraft({
     articleTypeId: 1,
     authorId,
     productId: null,
     projectId: null,
-    themeId: null,
+    themeId,
     topicId: null,
     title,
     topic: 'Testing',
@@ -671,6 +736,64 @@ test('PUSH: a featured image is uploaded and attached to the draft', async () =>
   assert.equal(stored.featuredMedia, media.id, 'and the post points at it');
 });
 
+test('IMAGE PUSH: a published article can be given its image without being unpublished', async () => {
+  /**
+   * The gap this closes, found on the live site: an article was published,
+   * its featured image was chosen in Cynth afterwards, and the live post had
+   * no image at all. Nothing was broken — there was no path. Every ordinary
+   * write this connector makes says `status: draft`, so the only way to give
+   * a published article its picture would have been to unpublish it first.
+   */
+  resetMock();
+  const article = await makeGeneratedArticleWithImage('Published Already', 'late-hero.png', 'A lit window');
+  const pushed = await publish.pushArticle(article.id, connection.id, 'create');
+
+  // The human published it in WordPress, which is where publishing happens.
+  const post = state.posts.get(Number(pushed.post.id))!;
+  post.status = 'publish';
+  post.featuredMedia = undefined;
+  state.writes.length = 0;
+  state.media.clear();
+
+  const result = await publish.pushFeaturedImage(article.id, connection.id);
+
+  assert.equal(state.media.size, 1, 'the file was uploaded');
+  assert.equal(post.featuredMedia, [...state.media.values()][0].id, 'and the post points at it');
+  assert.equal(post.status, 'publish', 'the article is still published');
+  assert.match(result.message, /attached to post/i);
+
+  // The part that matters. No status was sent at all — that omission is what
+  // makes this safe, because WordPress then leaves the post's own status
+  // alone. Sending "draft" here would have taken a live article offline.
+  for (const write of state.writes) {
+    assert.equal(write.status, undefined, 'a status must never be sent on this path');
+  }
+
+  // And nothing that a reader sees was touched.
+  for (const write of state.writes) {
+    for (const field of ['title', 'content', 'slug', 'excerpt', 'author']) {
+      assert.equal(write[field], undefined, `${field} must not be sent`);
+    }
+  }
+});
+
+test('IMAGE PUSH: an article with no image, or no post, is refused rather than half-done', async () => {
+  resetMock();
+
+  const noImage = await makeGeneratedArticle('No Image At All');
+  await publish.pushArticle(noImage.id, connection.id, 'create');
+  await assert.rejects(
+    () => publish.pushFeaturedImage(noImage.id, connection.id),
+    /no featured image selected/i,
+  );
+
+  const notPushed = await makeGeneratedArticleWithImage('Never Pushed', 'unsent.png', null);
+  await assert.rejects(
+    () => publish.pushFeaturedImage(notPushed.id, connection.id),
+    /has not been pushed/i,
+  );
+});
+
 test('PUSH: every write made while attaching an image still asks for a draft', async () => {
   resetMock();
   const article = await makeGeneratedArticleWithImage('Draft Only', 'x.png', null);
@@ -925,6 +1048,198 @@ test('SECURITY: an application password echoed back by the CMS is redacted', asy
   assert.match(leaked, /REDACTED/);
 });
 
+/* ================ the category an article is filed under ================ */
+
+/**
+ * WHY CYNTH SETS THIS AT ALL. It used to send no category, so every article
+ * arrived uncategorised and a human filed it by hand. One did not match: a
+ * Sleep & Recovery piece was published under Smart Pet Care, which kept it off
+ * its own category page and put it on somebody else's, and nothing anywhere
+ * could have caught that. Cynth already knows the thematic area — it is the
+ * field the article was commissioned under.
+ */
+
+// A project to hang the themes on. Inserted directly because the content
+// repository exposes no create for projects — themes are what this needs.
+const projectId = Number(
+  db().prepare("INSERT INTO projects (name, slug) VALUES ('Category Test Project', 'category-test')").run()
+    .lastInsertRowid,
+);
+
+const petCareTheme = content.createTheme(projectId, { name: 'Smart Pet Care', description: null } as never);
+const sleepTheme = content.createTheme(projectId, { name: 'Sleep & Recovery', description: null } as never);
+const inventedTheme = content.createTheme(projectId, { name: 'Astrology For Cats', description: null } as never);
+
+test('CATEGORY: an article is filed under its own thematic area', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Filed Correctly', null, petCareTheme.id);
+
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+
+  const sent = state.writes[state.writes.length - 1];
+  assert.deepEqual(sent.categories, [11], 'the id of the site’s existing Smart Pet Care category');
+  assert.deepEqual(state.posts.get(Number(created.post.id))!.categories, [11]);
+});
+
+test('CATEGORY: an entity-encoded name on the site still matches', async () => {
+  resetMock();
+  // WordPress stores this one as "Sleep &amp; Recovery"; Cynth holds the plain
+  // characters. Comparing them undecoded matches nothing, silently.
+  const article = await makeGeneratedArticle('Ampersand Area', null, sleepTheme.id);
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  assert.deepEqual(state.writes[state.writes.length - 1].categories, [15]);
+});
+
+test('CATEGORY: an unknown area creates nothing, and clears nothing', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('No Such Category', null, inventedTheme.id);
+  const categoriesBefore = state.categories.size;
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  const sent = state.writes[state.writes.length - 1];
+  assert.equal(sent.categories, undefined, 'no categories field at all');
+  assert.equal(state.categories.size, categoriesBefore, 'and no category was invented on the site');
+
+  // An empty array would have been the tempting alternative, and it would have
+  // stripped the post of every category it had — turning "I could not find
+  // yours" into "I removed the one you were using".
+  assert.notDeepEqual(sent.categories, []);
+});
+
+test('CATEGORY: an article with no thematic area sends none', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('No Area At All');
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  assert.equal(state.writes[state.writes.length - 1].categories, undefined);
+});
+
+test('CATEGORY: the preview says where it will be filed, before anything is sent', async () => {
+  const article = await makeGeneratedArticle('Previewed Filing', null, sleepTheme.id);
+  const preview = publish.previewMapping(article.id, connection.id);
+  assert.equal(preview.categoryName, 'Sleep & Recovery');
+});
+
+/* ============ replacing an article that is already published ============ */
+
+/**
+ * WHY THIS EXISTS AT ALL. Cynth refused to touch published content for two
+ * reasons, and only one of them was a policy. The other was mechanical:
+ * `updateDraft` sends `status: draft` unconditionally, so "updating" a live
+ * post would not have updated it, it would have UNPUBLISHED it — the article
+ * gone from the site, and the caller shown a success.
+ *
+ * The policy reason stands, and these tests are what holds it: a separate
+ * mode no default can reach, an explicit yes every time, a second yes when
+ * somebody has edited the post in WordPress since, and a payload carrying no
+ * status and no slug.
+ */
+
+let liveArticleId = 0;
+
+test('LIVE UPDATE: the ordinary update still refuses, and now says what to use', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Ordinary Update Refusal');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  state.posts.get(Number(created.post.id))!.status = 'publish';
+
+  await assert.rejects(
+    () => publish.pushArticle(article.id, connection.id, 'update'),
+    (err: any) => err.code === 'remote_post_published' && /Update the live article/.test(err.message),
+  );
+});
+
+test('LIVE UPDATE: without a confirmation it writes nothing', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Unconfirmed Live Update');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  state.posts.get(Number(created.post.id))!.status = 'publish';
+  const writesBefore = state.writes.length;
+
+  await assert.rejects(
+    () => publish.pushArticle(article.id, connection.id, 'update_published'),
+    (err: any) => err.code === 'live_update_not_confirmed',
+    'a missing confirmation is a refusal, never a default yes',
+  );
+
+  assert.equal(state.writes.length, writesBefore, 'nothing was sent');
+  assert.equal(state.posts.get(Number(created.post.id))!.status, 'publish');
+});
+
+test('LIVE UPDATE: confirmed, it replaces the body and leaves the post published', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Confirmed Live Update');
+  liveArticleId = article.id;
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  const postId = Number(created.post.id);
+
+  state.posts.get(postId)!.status = 'publish';
+  const originalSlug = state.posts.get(postId)!.slug;
+
+  // One acknowledgement, not two: nobody has edited it in WordPress.
+  const result = await publish.pushArticle(article.id, connection.id, 'update_published', { confirmed: true });
+
+  assert.equal(result.operation, 'update_published');
+  assert.equal(state.posts.get(postId)!.status, 'publish', 'the article is still live');
+  assert.equal(state.posts.get(postId)!.slug, originalSlug, 'and its URL did not move');
+
+  const sent = state.writes[state.writes.length - 1];
+  assert.equal(sent.status, undefined, 'no status is announced, so WordPress keeps its own');
+  assert.equal(sent.slug, undefined, 'no slug is sent, so the live URL cannot be moved');
+  assert.ok(typeof sent.content === 'string' && sent.content.length > 0, 'the body is what changed');
+});
+
+test('LIVE UPDATE: pointed at a draft, it sends you to the ordinary update', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Still A Draft');
+  await publish.pushArticle(article.id, connection.id, 'create');
+
+  await assert.rejects(
+    () => publish.pushArticle(article.id, connection.id, 'update_published', { confirmed: true }),
+    (err: any) => err.code === 'remote_post_is_draft',
+    'nobody is reading a draft, so the risky path is the wrong one',
+  );
+});
+
+test('LIVE UPDATE: an edit made in WordPress since the last push stops it', async () => {
+  resetMock();
+  const article = await makeGeneratedArticle('Edited In WordPress');
+  const created = await publish.pushArticle(article.id, connection.id, 'create');
+  const postId = Number(created.post.id);
+  state.posts.get(postId)!.status = 'publish';
+
+  // Somebody fixes a typo on the site, an hour after Cynth last sent it.
+  state.modifiedOverride = new Date(Date.now() + 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, '');
+  const writesBefore = state.writes.length;
+
+  await assert.rejects(
+    () => publish.pushArticle(article.id, connection.id, 'update_published', { confirmed: true }),
+    (err: any) => err.code === 'remote_edited_since_push',
+    'confirming "replace the live article" is not confirming "discard their edit"',
+  );
+  assert.equal(state.writes.length, writesBefore, 'nothing was sent');
+
+  // Told about it, the editor may still choose to overwrite.
+  const result = await publish.pushArticle(article.id, connection.id, 'update_published', {
+    confirmed: true,
+    acknowledgeRemoteEdits: true,
+  });
+  assert.equal(result.operation, 'update_published');
+  state.modifiedOverride = null;
+});
+
+test('LIVE UPDATE: the history records it as its own operation', () => {
+  const history = links.listPushHistoryForArticle(liveArticleId);
+  assert.ok(
+    history.some((entry) => entry.operation === 'update_published'),
+    'a live replacement must be findable in the audit trail, not hidden inside "update"',
+  );
+});
+
 /* ================= connector-level draft-only guarantee ================= */
 
 test('SAFETY: the connector contract has no way to publish', () => {
@@ -935,11 +1250,25 @@ test('SAFETY: the connector contract has no way to publish', () => {
   assert.equal(typeof wordpressConnector.updateDraft, 'function');
 });
 
-test('SAFETY: every write the mock received asked for a draft', () => {
-  // The mock asserts this per-request as well; this is the cumulative check.
+test('SAFETY: no write ever asked this CMS to publish anything', () => {
+  /**
+   * RESTATED, NOT RELAXED. This used to assert `status === 'draft'` on every
+   * write, which was the right guarantee while every write announced a status.
+   * Updating an article that is ALREADY live must announce none — sending
+   * `status: draft` at a published post unpublishes it — so the invariant is
+   * now the one that was always meant: a write either asks for a draft or
+   * says nothing about status at all. Neither can publish.
+   */
   for (const write of state.writes) {
-    assert.equal(write.status, 'draft');
+    assert.ok(
+      write.status === 'draft' || write.status === undefined,
+      `a write asked for status "${String(write.status)}"`,
+    );
   }
+  assert.ok(
+    state.writes.some((write) => write.status === undefined),
+    'and the live-update path really did send no status, rather than never running',
+  );
 });
 
 test('SECRETS: the secret store keeps values out of the database entirely', () => {

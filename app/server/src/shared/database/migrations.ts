@@ -54,6 +54,24 @@ const PRODUCT_RESEARCH_COLUMNS_TO_ADD: { name: string; type: string }[] = [
  * for. ON DELETE SET NULL, because retiring a thematic area must never delete
  * a product — the association goes, the product stays.
  */
+/**
+ * The editor's pick flag (Milestone 48).
+ *
+ * A product the editor has chosen to show in a category's picks row on the
+ * site. It lives here rather than on the site because the decision is an
+ * editorial one made while looking at the product — and because a flag kept
+ * only in WordPress would be lost the next time the registry was pushed over
+ * it.
+ *
+ * Deliberately NOT capped at three per category. The three in the original
+ * design was a layout decision — "the picks rows put three cards side by side
+ * at roughly 370px each" — not an SEO rule, and the row it feeds now scrolls
+ * rather than wraps.
+ */
+const PRODUCT_PICK_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'is_featured_pick', type: 'INTEGER NOT NULL DEFAULT 0' },
+];
+
 const PRODUCT_THEME_COLUMNS_TO_ADD: { name: string; type: string }[] = [
   { name: 'theme_id', type: 'INTEGER REFERENCES themes(id) ON DELETE SET NULL' },
 ];
@@ -420,6 +438,19 @@ function backfillModelCapabilities(db: DatabaseSync): void {
   }
 }
 
+
+/**
+ * Which SEO plugin a CMS connection writes its metadata into.
+ *
+ * NULL means "none chosen", which is the honest default and the behaviour
+ * every existing connection already had: no plugin fields are sent at all.
+ * A value here selects a mapping in cms/seoAdapter.ts; an unrecognised one
+ * selects nothing rather than guessing.
+ */
+const CMS_SEO_TARGET_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'seo_target', type: 'TEXT' },
+];
+
 function addMissingColumns(db: DatabaseSync, table: string, columns: { name: string; type: string }[]): void {
   const existingColumns = new Set(
     (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as ColumnInfo[]).map((column) => column.name),
@@ -455,12 +486,14 @@ export function runMigrations(db: DatabaseSync): void {
   addMissingColumns(db, 'products', PRODUCT_COLUMNS_TO_ADD);
   addMissingColumns(db, 'products', PRODUCT_RESEARCH_COLUMNS_TO_ADD);
   addMissingColumns(db, 'products', PRODUCT_THEME_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'products', PRODUCT_PICK_COLUMNS_TO_ADD);
   addMissingColumns(db, 'article_products', ARTICLE_PRODUCT_REVIEW_COLUMNS_TO_ADD);
   addMissingColumns(db, 'ai_provider_models', AI_MODEL_PIPELINE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'generation_history', GENERATION_HISTORY_PIPELINE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_PIPELINE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'article_pipelines', PIPELINE_RUN_MODE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'article_pipelines', PIPELINE_TOPIC_MODE_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'cms_connections', CMS_SEO_TARGET_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_GENERATION_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_CONTENT_COLUMNS_TO_ADD);

@@ -484,8 +484,25 @@ test('CARD: the vendor reaches the card, so the button is not hardcoded to one r
   const unknown = renderProductCard({ ...product, vendor: 'rei' });
   assert.ok(unknown.includes('vendor="rei"'), 'an unfamiliar vendor must still be passed through');
 
-  const none = renderProductCard({ ...product, vendor: null });
-  assert.ok(!none.includes('vendor='), 'no vendor means no attribute, not an empty one');
+  /**
+   * This last assertion used to read "no vendor means no attribute", and it
+   * was the bug. `products.vendor` was NULL on every row ever created —
+   * nothing had ever written to it — so no card carried a vendor and every
+   * button on the live site read the neutral fallback "Check price" instead
+   * of naming the shop.
+   *
+   * A blank vendor now falls through to the affiliate URL, which is the one
+   * authoritative statement of where the reader is being sent.
+   */
+  const derived = renderProductCard({ ...product, vendor: null });
+  assert.ok(derived.includes('vendor="amazon"'), 'a blank vendor is read from the link instead');
+  assert.ok(derived.includes('cta="Shop on Amazon"'), 'and the button says where the reader is going');
+
+  // And the guarantee that survives: a link that identifies no shop still
+  // produces no attribute, because a wrong shop name is worse than none.
+  const opaque = renderProductCard({ ...product, vendor: null, affiliateUrl: 'https://bit.ly/3xYz' });
+  assert.ok(!opaque.includes('vendor='), 'an unidentifiable link names no shop');
+  assert.ok(!opaque.includes('cta='), 'and offers no wording for the button');
 });
 
 test('CARD: key features are NOT on the card — they are for the writer, not the reader', () => {

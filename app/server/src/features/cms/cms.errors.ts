@@ -36,6 +36,12 @@ export type CmsErrorCode =
   | 'not_pushed_yet'
   | 'remote_post_missing'
   | 'remote_post_published'
+  // Replacing a LIVE article. Three distinct refusals, because they have
+  // three distinct answers: point it at a draft instead, say yes, or go and
+  // look at what somebody changed in WordPress first.
+  | 'remote_post_is_draft'
+  | 'live_update_not_confirmed'
+  | 'remote_edited_since_push'
   | 'push_in_progress'
   // The SEO gate. Not a CMS failure and not a content failure: Cynth
   // declining to hand over an article that has not passed SEO review.
@@ -52,6 +58,9 @@ const HTTP_STATUS_BY_CODE: Record<CmsErrorCode, number> = {
   not_pushed_yet: 409,
   remote_post_missing: 409,
   remote_post_published: 409,
+  remote_post_is_draft: 409,
+  live_update_not_confirmed: 409,
+  remote_edited_since_push: 409,
   push_in_progress: 409,
   seo_gate_blocked: 409,
   authentication_failed: 502,
