@@ -80,7 +80,11 @@ export interface ProductOptions {
   opportunityAssessment: string | null;
   themeId: number | null;
   themeName: string | null;
+  /** Added to the library since this run started, newest first, whatever their area. */
+  justAdded: ProductOption[];
+  /** Filed under the article's area, newest first. */
   inTheme: ProductOption[];
+  /** Everything else; shown only when the editor opens the full library. */
   others: ProductOption[];
   attachedProductIds: number[];
   /** How many places this article's template can put a product. */

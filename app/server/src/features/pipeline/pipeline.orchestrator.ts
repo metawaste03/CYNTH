@@ -148,17 +148,6 @@ function outputOf<T>(pipeline: PipelineDto, stage: PipelineStage): T | null {
 }
 
 /**
- * What the editor can put in front of the writer.
- *
- * The article's own thematic area does the filtering, exactly as the media
- * library does it: a workspace article should not have to scroll past pet-care
- * products. Everything else is still returned, in a second list, because a
- * product filed under the wrong area — or under none — must remain reachable
- * rather than invisible.
- *
- * Nothing here attaches anything. It reports what exists.
- */
-/**
  * How many places this article's template can actually put a product.
  *
  * Read from the template rather than assumed, because it is the honest answer
@@ -175,20 +164,49 @@ function productSlotsFor(templateId: string | null, version: number | null): num
   ).length;
 }
 
+/**
+ * What the editor can put in front of the writer, in three tiers:
+ *
+ *   1. JUST ADDED — anything added to the library since this run started,
+ *      whatever its area. The usual reason a product is that new is that the
+ *      editor left this checkpoint to go and find it, so it leads the list.
+ *      It used to be sorted in among everything else, and if it had been
+ *      filed under a different area it was invisible until the editor opened
+ *      the whole library — which buried it in every other category's products.
+ *   2. THIS AREA — products filed under the article's thematic area, newest
+ *      first. The list the editor is expected to choose from.
+ *   3. EVERYTHING ELSE — still returned, because a product filed under the
+ *      wrong area or none must stay reachable. The panel keeps it behind a
+ *      deliberate "show the full library".
+ *
+ * Newest means date ADDED. The repository sorts by last edit, which put a
+ * product touched by a bulk tidy-up above one added a minute ago.
+ *
+ * Nothing here attaches anything. It reports what exists.
+ */
 function buildProductOptions(pipeline: PipelineDto): ProductOptions {
   const article = getArticleById(pipeline.articleId);
   const articleThemeId = article?.themeId ?? null;
 
   const attachedIds = new Set(listArticleProducts(pipeline.articleId).map((row) => row.productId));
-  const all = listProducts({ status: 'active' });
+  // Both timestamps are SQLite's 'YYYY-MM-DD HH:MM:SS' UTC, so they compare as
+  // text. Strictly after: a product saved in the same second the run began was
+  // already there when the editor started, not found for this article.
+  const newestFirst = [...listProducts({ status: 'active' })].sort(
+    (a, b) => b.createdAt.localeCompare(a.createdAt) || b.id - a.id,
+  );
+  const addedThisRun = new Set(
+    newestFirst.filter((product) => product.createdAt > pipeline.startedAt).map((product) => product.id),
+  );
 
-  const options: ProductOption[] = all.map((product) =>
+  const options: ProductOption[] = newestFirst.map((product) =>
     toProductOption(product, {
       articleThemeId,
       imageUrl: product.primaryImage?.url ?? null,
       attached: attachedIds.has(product.id),
     }),
   );
+  const isJustAdded = (option: ProductOption) => addedThisRun.has(option.productId);
 
   const placementSlots = productSlotsFor(article?.templateId ?? null, article?.templateVersion ?? null);
 
@@ -206,8 +224,9 @@ function buildProductOptions(pipeline: PipelineDto): ProductOptions {
     // all — which the panel then rendered as "this article has no thematic
     // area", the one thing it was not.
     themeName: articleThemeId === null ? null : (getThemeById(articleThemeId)?.name ?? null),
-    inTheme: options.filter((option) => option.matchesTheme),
-    others: options.filter((option) => !option.matchesTheme),
+    justAdded: options.filter(isJustAdded),
+    inTheme: options.filter((option) => !isJustAdded(option) && option.matchesTheme),
+    others: options.filter((option) => !isJustAdded(option) && !option.matchesTheme),
     attachedProductIds: [...attachedIds],
     placementSlots,
     suggested:

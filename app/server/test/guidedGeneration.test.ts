@@ -731,6 +731,51 @@ test('PRODUCTS: the checkpoint offers this area first, and everything else secon
   assert.ok(options.placementSlots > 0, 'a buying guide has somewhere to put a product');
 });
 
+test('PRODUCTS: a product added while the article is in progress leads the list, whatever its area', async () => {
+  // The reported case: the editor leaves the products step, adds a desk lamp
+  // filed under another area, refreshes — and the lamp is nowhere near the
+  // top, reachable only by opening every other category's products too.
+  const older = makeProduct('Older In-Area Shoe', { themeId: theme.id, useCase: 'Trails' });
+  const newer = makeProduct('Newer In-Area Shoe', { themeId: theme.id, useCase: 'Roads' });
+
+  replies = router();
+  const { pipelineId } = startGuided();
+  for (const kind of ['topic', 'keywords_title', 'template'] as const) {
+    await orchestrator.advancePipeline(pipelineId);
+    orchestrator.decide(pipelineId, kind, decisionFor(kind), { accepted: true });
+  }
+  await orchestrator.advancePipeline(pipelineId);
+
+  // Timestamps are whole seconds, so date the run and the two existing
+  // products explicitly rather than sleeping between them.
+  db.prepare("UPDATE article_pipelines SET started_at = datetime('now', '-1 hour') WHERE id = ?").run(pipelineId);
+  // Every product made so far, including earlier tests', predates the run.
+  db.prepare("UPDATE products SET created_at = datetime('now', '-3 hours')").run();
+  db.prepare("UPDATE products SET created_at = datetime('now', '-2 hours') WHERE id = ?").run(newer.id);
+
+  // Found mid-checkpoint, and filed under a different area.
+  const lamp = makeProduct('Desk Lamp Found Just Now', { themeId: otherTheme.id, useCase: 'Lighting a desk' });
+
+  const options = orchestrator.getPipelineStatus(pipelineId)!.checkpoint!.options as {
+    justAdded: { productId: number; matchesTheme: boolean }[];
+    inTheme: { productId: number }[];
+    others: { productId: number }[];
+  };
+
+  assert.deepEqual(
+    options.justAdded.map((entry) => entry.productId),
+    [lamp.id],
+    'the product just added comes first, though it is filed elsewhere',
+  );
+  assert.equal(options.justAdded[0].matchesTheme, false, 'and is marked as another area');
+
+  const inTheme = options.inTheme.map((entry) => entry.productId);
+  assert.ok(inTheme.indexOf(newer.id) < inTheme.indexOf(older.id), 'this area is newest-added first');
+
+  const everywhere = [...options.inTheme, ...options.others].map((entry) => entry.productId);
+  assert.ok(!everywhere.includes(lamp.id), 'listed once, not again further down');
+});
+
 test('PRODUCTS: a product with nothing recorded about its purpose is flagged BEFORE it is chosen', async () => {
   const thin = makeProduct('Mystery Gadget', { themeId: theme.id });
   const ready = makeProduct('Explained Gadget', {

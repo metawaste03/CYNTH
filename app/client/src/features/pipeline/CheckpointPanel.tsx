@@ -319,6 +319,16 @@ function TemplateChoice({ options, busy, onDecide }: { options: TemplateOptions;
 
 /* ------------------------------------------------------------ products --- */
 
+/**
+ * An image URL the browser can load. Stored uploads arrive as "/uploads/…",
+ * and prefixing another slash made "//uploads/…" — a protocol-relative URL to
+ * a host called "uploads" — so no thumbnail in this list ever loaded. A
+ * retailer's own image URL is absolute and is used as it is.
+ */
+function imageSrc(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `/${url.replace(/^\/+/, '')}`;
+}
+
 function ProductRow({
   product,
   checked,
@@ -332,7 +342,7 @@ function ProductRow({
     <li className={`checkpoint-option product-row ${checked ? 'is-selected' : ''}`}>
       <label>
         <input type="checkbox" checked={checked} onChange={onToggle} />
-        {product.imageUrl && <img className="product-row__image" src={`/${product.imageUrl}`} alt="" />}
+        {product.imageUrl && <img className="product-row__image" src={imageSrc(product.imageUrl)} alt="" />}
         <span className="checkpoint-option__title">
           {product.title}
           {product.brand && <span className="pipeline-muted"> · {product.brand}</span>}
@@ -451,7 +461,15 @@ function ProductChoice({
   onRefresh: () => void;
 }) {
   const [selected, setSelected] = useState<number[]>(options.attachedProductIds);
-  const [showOthers, setShowOthers] = useState(options.inTheme.length === 0);
+  // Not opened on the editor's behalf. It used to open itself whenever the
+  // area had no products, which filled the list with every other category's.
+  // The one exception: a product already chosen from it, which must not be
+  // ticked out of sight.
+  const [showOthers, setShowOthers] = useState(() =>
+    options.others.some((product) => options.attachedProductIds.includes(product.productId)),
+  );
+  // `?? []` so a server that predates the field still renders.
+  const justAdded = options.justAdded ?? [];
 
   function toggle(productId: number) {
     setSelected((current) =>
@@ -473,12 +491,35 @@ function ProductChoice({
         {options.suggested}
       </p>
 
+      {/* First, whatever was added while this article was in progress — the
+          product the editor just went and found — even when it is filed under
+          another area. Its area badge says so. */}
+      {justAdded.length > 0 && (
+        <>
+          <h5 className="checkpoint-subhead">Just added</h5>
+          <ul className="checkpoint-options">
+            {justAdded.map((product) => (
+              <ProductRow
+                key={product.productId}
+                product={product}
+                checked={selected.includes(product.productId)}
+                onToggle={() => toggle(product.productId)}
+              />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {justAdded.length > 0 && options.inTheme.length > 0 && (
+        <h5 className="checkpoint-subhead">{options.themeName ?? 'This area'}</h5>
+      )}
+
       {options.inTheme.length === 0 ? (
         <p className="pipeline-muted">
           {options.themeName
-            ? `No products are filed under ${options.themeName} yet.`
+            ? `No ${justAdded.length > 0 ? 'other ' : ''}products are filed under ${options.themeName} yet.`
             : 'No products are filed yet.'}{' '}
-          Add one below, or choose from everything else.
+          Add one below, or open the full library.
         </p>
       ) : (
         <ul className="checkpoint-options">
@@ -495,10 +536,11 @@ function ProductChoice({
 
       {options.others.length > 0 && (
         <>
-          <label className="checkpoint-custom">
-            <input type="checkbox" checked={showOthers} onChange={(e) => setShowOthers(e.target.checked)} />
-            Also show the {options.others.length} product{options.others.length === 1 ? '' : 's'} filed elsewhere
-          </label>
+          <button type="button" className="button button--quiet" onClick={() => setShowOthers((open) => !open)}>
+            {showOthers
+              ? 'Hide the full library'
+              : `Show the full library (${options.others.length} more product${options.others.length === 1 ? '' : 's'} in other areas)`}
+          </button>
 
           {showOthers && (
             <ul className="checkpoint-options">

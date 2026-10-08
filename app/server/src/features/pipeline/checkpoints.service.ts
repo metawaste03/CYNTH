@@ -299,7 +299,13 @@ export interface ProductOptions {
   opportunityAssessment: string | null;
   themeId: number | null;
   themeName: string | null;
-  /** Products filed under this article's area. The list the editor is expected to choose from. */
+  /**
+   * Products added to the library since this run started, newest first,
+   * whatever area they are filed under. Almost always the product the editor
+   * just went and found for this article, so it leads the list.
+   */
+  justAdded: ProductOption[];
+  /** Products filed under this article's area, newest first. The list the editor is expected to choose from. */
   inTheme: ProductOption[];
   /** Everything else, so a product filed elsewhere or nowhere is still reachable. */
   others: ProductOption[];

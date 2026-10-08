@@ -2,6 +2,20 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.56.0] - 2026-10-08
+
+### Fixed
+
+- **The product you just added now leads the products step.** Reported plainly: the newest product should come first, then only that category's, then the option to open the full library. Instead, a desk lamp added for article 49 mid-checkpoint was filed under another area, so it appeared nowhere near the top — reachable only by opening every other category's products. The step now lists, in order: **Just added** (anything added to the library since this run started, whatever its area, marked with its area), **this area** (newest added first), and **Show the full library** behind a button.
+
+- **"Newest" means date added, not date last edited.** The list followed the repository's `updated_at` order, so a product touched by a bulk tidy-up sat above one added a minute ago.
+
+- **The full library no longer opens itself.** It used to open whenever the article's area had no products, filling the step with other categories. It now opens on its own only when a product already chosen for this article is in it, so nothing ticked is hidden.
+
+- **Product thumbnails in this step never loaded.** The image address was built as `/` + `/uploads/…`, which the browser read as a host called "uploads". Retailer image URLs are now used as they are.
+
+**Verified**: 1 new test. On a copy of the real database, article 49's step lists the lamp first, then the five Cognitive Performance products, with 43 behind the button. **553 tests pass.**
+
 ## [0.55.0] - 2026-10-08
 
 ### Security
