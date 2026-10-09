@@ -7,12 +7,23 @@ export interface ProductImage {
   createdAt: string;
 }
 
+/** Must match PICK_BADGES on the server (products.validation.ts). */
+export const PICK_BADGE_OPTIONS = [
+  { value: 'editors-pick', label: 'Editor’s Pick' },
+  { value: 'best-value', label: 'Best Value' },
+  { value: 'upgrade-pick', label: 'Upgrade Pick' },
+] as const;
+
+export type PickBadge = (typeof PICK_BADGE_OPTIONS)[number]['value'];
+
 export interface Product {
   id: number;
   title: string;
   brand: string | null;
   category: string | null;
   isFeaturedPick: boolean;
+  /** The editors' review badge, or null for none. */
+  pickBadge: PickBadge | null;
   shortDescription: string | null;
   description: string | null;
   /** The user's link. Supplied by them, stored verbatim, never rewritten by research. */
@@ -52,6 +63,8 @@ export interface ProductInput {
   category?: string;
   /** Show this product in its category's picks row on the site. */
   isFeaturedPick?: boolean;
+  /** null clears the badge; undefined leaves it unchanged. */
+  pickBadge?: PickBadge | null;
   shortDescription?: string;
   description?: string;
   affiliateLink?: string;

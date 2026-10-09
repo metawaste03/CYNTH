@@ -24,6 +24,17 @@ export function fetchProducts(filters: ProductListFilters = {}): Promise<Product
   return api.get<{ products: ProductListItem[] }>(`/products${buildQuery(filters)}`).then((r) => r.products);
 }
 
+export interface PublishResult {
+  ok: boolean;
+  steps: { name: string; ok: boolean; output: string }[];
+  summary: string;
+}
+
+/** Export every active product and send it to EveryFiveDays. Changes the live site. */
+export function publishProducts(): Promise<PublishResult> {
+  return api.post<PublishResult>('/products/publish', {});
+}
+
 export function fetchProductCategories(): Promise<string[]> {
   return api.get<{ categories: string[] }>('/products/meta/categories').then((r) => r.categories);
 }

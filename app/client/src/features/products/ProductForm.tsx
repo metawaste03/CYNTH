@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type { ProductInput } from '../../shared/types/product';
+import type { PickBadge, ProductInput } from '../../shared/types/product';
+import { PICK_BADGE_OPTIONS } from '../../shared/types/product';
 import { ApiError } from '../../shared/services/apiClient';
 import type { Theme } from '../../shared/types/content';
 import { fetchThemes } from '../content/api';
@@ -10,6 +11,8 @@ export interface ProductFormValues {
   brand: string;
   category: string;
   isFeaturedPick: boolean;
+  /** '' for no badge. */
+  pickBadge: PickBadge | '';
   shortDescription: string;
   description: string;
   affiliateLink: string;
@@ -52,6 +55,7 @@ const EMPTY_VALUES: ProductFormValues = {
   brand: '',
   category: '',
   isFeaturedPick: false,
+  pickBadge: '',
   shortDescription: '',
   description: '',
   affiliateLink: '',
@@ -146,6 +150,8 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           brand: values.brand.trim() || undefined,
           category: values.category.trim() || undefined,
           isFeaturedPick: values.isFeaturedPick,
+          // Always sent, so choosing "No badge" really clears one.
+          pickBadge: values.pickBadge || null,
           shortDescription: values.shortDescription.trim() || undefined,
           description: values.description.trim() || undefined,
           affiliateLink: values.affiliateLink.trim() || undefined,
@@ -251,10 +257,32 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           />
           Editor&rsquo;s pick
           <span className="product-form__hint">
-            Shows this product in its category&rsquo;s picks row on EveryFiveDays, and in the combined row on the home
-            and blog pages. There is no limit — the row scrolls when it holds more than three.
+            Shows this product in its category&rsquo;s editors&rsquo; review section on EveryFiveDays. Each area shows
+            up to three picks, badged ones first.
           </span>
         </label>
+
+        {/* Only meaningful for a pick, so only offered for one. The stored
+            value is kept if the pick is unticked, and the site ignores it. */}
+        {values.isFeaturedPick && (
+          <label>
+            Badge
+            <select
+              value={values.pickBadge}
+              onChange={(e) => updateField('pickBadge', e.target.value as PickBadge | '')}
+            >
+              <option value="">No badge</option>
+              {PICK_BADGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="product-form__hint">
+              The label in the corner of this product&rsquo;s card. Use each badge once per area.
+            </span>
+          </label>
+        )}
         <label>
           Short Description
           <textarea rows={2} value={values.shortDescription} onChange={(e) => updateField('shortDescription', e.target.value)} />

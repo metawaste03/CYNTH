@@ -1,6 +1,7 @@
 import { getDatabase } from '../../shared/database/index.js';
 import type { ProductRow, ProductImageRow } from '../../shared/database/types.js';
-import type { ProductInput } from './products.validation.js';
+import type { PickBadge, ProductInput } from './products.validation.js';
+import { isPickBadge } from './products.validation.js';
 import { deriveVendor } from './vendor.service.js';
 
 export interface ProductListFilters {
@@ -40,6 +41,8 @@ export interface ProductDto {
   brand: string | null;
   category: string | null;
   isFeaturedPick: boolean;
+  /** The editors' review badge: 'editors-pick' | 'best-value' | 'upgrade-pick', or null for none. */
+  pickBadge: PickBadge | null;
   shortDescription: string | null;
   description: string | null;
   /** THE USER'S LINK. Supplied by them, stored verbatim, never rewritten by research. */
@@ -81,6 +84,12 @@ export interface NewImageInput {
   isPrimary?: boolean;
 }
 
+/** The stored badge, or null when there is none or the value is not one Cynth knows. */
+function readPickBadge(row: ProductRow): PickBadge | null {
+  const value = (row as unknown as { pick_badge?: unknown }).pick_badge;
+  return isPickBadge(value) ? value : null;
+}
+
 function mapProduct(row: ProductRow): ProductDto {
   return {
     id: row.id,
@@ -88,6 +97,7 @@ function mapProduct(row: ProductRow): ProductDto {
     brand: row.brand,
     category: row.category,
     isFeaturedPick: Number((row as { is_featured_pick?: number }).is_featured_pick ?? 0) === 1,
+    pickBadge: readPickBadge(row),
     shortDescription: row.short_description,
     description: row.description,
     affiliateLink: row.affiliate_link,
@@ -231,8 +241,8 @@ export function createProduct(input: ProductInput): ProductDetailDto {
   const insert = db.prepare(`
     INSERT INTO products (
       title, brand, category, short_description, description, affiliate_link, editorial_fit, notes, is_active, theme_id,
-      use_case, problem_solved, best_for, key_features, vendor, is_featured_pick
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      use_case, problem_solved, best_for, key_features, vendor, is_featured_pick, pick_badge
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = insert.run(
     input.title,
@@ -253,6 +263,7 @@ export function createProduct(input: ProductInput): ProductDetailDto {
     // authoritative statement of where a reader is being sent.
     deriveVendor(input.affiliateLink)?.slug ?? null,
     input.isFeaturedPick ? 1 : 0,
+    input.pickBadge ?? null,
   );
   return getProductById(Number(result.lastInsertRowid))!;
 }
@@ -273,6 +284,9 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
       -- Undefined leaves the flag alone, so a form that does not send it
       -- cannot silently unpick a product.
       is_featured_pick = COALESCE(?, is_featured_pick),
+      -- Not COALESCE: "no badge" is a real value, so whether a badge was sent
+      -- at all travels as its own flag. Unsent leaves it; null clears it.
+      pick_badge = CASE WHEN ? THEN ? ELSE pick_badge END,
       -- Undefined leaves what is there alone, so saving the form does not wipe
       -- fields that product research wrote and the form did not send.
       use_case = COALESCE(?, use_case),
@@ -293,6 +307,8 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
     input.themeId ?? null,
     deriveVendor(input.affiliateLink)?.slug ?? null,
     input.isFeaturedPick === undefined ? null : input.isFeaturedPick ? 1 : 0,
+    input.pickBadge === undefined ? 0 : 1,
+    input.pickBadge ?? null,
     // undefined -> NULL -> COALESCE keeps the stored value. An empty string is
     // a deliberate clear and is written as one.
     input.useCase ?? null,

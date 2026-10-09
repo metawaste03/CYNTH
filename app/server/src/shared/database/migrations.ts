@@ -70,6 +70,9 @@ const PRODUCT_RESEARCH_COLUMNS_TO_ADD: { name: string; type: string }[] = [
  */
 const PRODUCT_PICK_COLUMNS_TO_ADD: { name: string; type: string }[] = [
   { name: 'is_featured_pick', type: 'INTEGER NOT NULL DEFAULT 0' },
+  // The label the editors' review card wears: 'editors-pick', 'best-value',
+  // 'upgrade-pick', or NULL for none. Validated against PICK_BADGES.
+  { name: 'pick_badge', type: 'TEXT' },
 ];
 
 const PRODUCT_THEME_COLUMNS_TO_ADD: { name: string; type: string }[] = [

@@ -1,10 +1,29 @@
 /** Field-presence validation only — no AI summaries, no scraping. */
 
+/**
+ * The badges a pick can wear in EveryFiveDays' editors' review section. The
+ * key is what is stored and sent to the site; the label is what readers see.
+ * A product with no badge shows none — nothing is invented to fill the slot.
+ */
+export const PICK_BADGES = {
+  'editors-pick': 'Editor’s Pick',
+  'best-value': 'Best Value',
+  'upgrade-pick': 'Upgrade Pick',
+} as const;
+
+export type PickBadge = keyof typeof PICK_BADGES;
+
+export function isPickBadge(value: unknown): value is PickBadge {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PICK_BADGES, value);
+}
+
 export interface ProductInput {
   title: string;
   brand?: string;
   category?: string;
   isFeaturedPick?: boolean;
+  /** undefined = leave unchanged; null = no badge; otherwise one of PICK_BADGES. */
+  pickBadge?: PickBadge | null;
   shortDescription?: string;
   description?: string;
   affiliateLink?: string;
@@ -78,6 +97,17 @@ export function validateProductInput(body: unknown): ValidationResult<ProductInp
     }
   }
 
+  let pickBadge: PickBadge | null | undefined;
+  if (input.pickBadge !== undefined) {
+    if (input.pickBadge === null || input.pickBadge === '') {
+      pickBadge = null;
+    } else if (isPickBadge(input.pickBadge)) {
+      pickBadge = input.pickBadge;
+    } else {
+      errors.push(`pickBadge must be one of: ${Object.keys(PICK_BADGES).join(', ')} — or empty for none.`);
+    }
+  }
+
   if (input.isActive !== undefined && typeof input.isActive !== 'boolean') {
     errors.push('isActive must be true or false.');
   }
@@ -102,6 +132,7 @@ export function validateProductInput(body: unknown): ValidationResult<ProductInp
       // Absent means "unchanged", which is what lets a partial save leave
       // the pick flag alone rather than clearing it.
       isFeaturedPick: typeof input.isFeaturedPick === 'boolean' ? input.isFeaturedPick : undefined,
+      pickBadge,
       shortDescription: (input.shortDescription as string | undefined) || undefined,
       description: (input.description as string | undefined) || undefined,
       affiliateLink: (input.affiliateLink as string | undefined)?.trim() || undefined,

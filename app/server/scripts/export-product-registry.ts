@@ -29,6 +29,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initializeDatabase, getDatabase } from '../src/shared/database/index.js';
 import { deriveVendor } from '../src/features/products/vendor.service.js';
+import { isPickBadge } from '../src/features/products/products.validation.js';
 
 const DEFAULT_REPO = 'C:/Users/MetaWaste/OneDrive/Desktop/CLAUDE/Everyfivedays';
 const CYNTH_UPLOADS = path.resolve(process.cwd(), '..', '..', 'database', 'uploads');
@@ -58,7 +59,7 @@ const db = getDatabase();
 const products = db
   .prepare(
     `SELECT p.id, p.title, p.brand, p.vendor, p.affiliate_link, p.short_description, p.description,
-            p.category, p.is_featured_pick,
+            p.category, p.is_featured_pick, p.pick_badge,
             (SELECT i.file_path FROM product_images i
               WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.position, i.id LIMIT 1) AS image_path
        FROM products p
@@ -75,6 +76,7 @@ const products = db
   description: string | null;
   category: string | null;
   is_featured_pick: number;
+  pick_badge: string | null;
   image_path: string | null;
 }[];
 
@@ -138,7 +140,13 @@ for (const product of products) {
   // The category the picks row groups by, and the flag it selects on. Both
   // are editorial decisions made in Cynth; the site only renders them.
   put('efd_category', product.category);
-  if (product.is_featured_pick) meta.efd_featured = '1';
+  // The pick flag and its badge are ALWAYS sent, unlike the fields above.
+  // They are switches, not facts that might be missing: off and "no badge"
+  // are real decisions. Sending only the "on" state meant unticking a pick in
+  // Cynth never reached the site — the importer only writes what it is given,
+  // so the old '1' stayed there and the product stayed a pick.
+  meta.efd_featured = product.is_featured_pick ? '1' : '0';
+  meta.efd_badge = isPickBadge(product.pick_badge) ? product.pick_badge : '';
 
   rows.push({
     cynth_id: String(product.id),

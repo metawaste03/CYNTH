@@ -6,6 +6,7 @@ import * as repo from './products.repository.js';
 import { validateProductInput } from './products.validation.js';
 import { productImageUpload, relativeUploadPath } from './products.upload.js';
 import { DATABASE_DIR } from '../../shared/database/index.js';
+import { isPublishing, publishProducts } from './productPublish.service.js';
 
 export const productsRouter = Router();
 
@@ -46,6 +47,21 @@ productsRouter.get('/', (req, res) => {
 
 productsRouter.get('/meta/categories', (_req, res) => {
   res.json({ categories: repo.listDistinctCategories() });
+});
+
+/**
+ * Sends every active product to EveryFiveDays: export, then deploy. See
+ * productPublish.service.ts. It changes the live site, so the client asks
+ * for confirmation first; this route trusts that and simply runs it.
+ */
+productsRouter.post('/publish', async (_req, res) => {
+  // Always 200 with an ok flag: a failed publish is a result to show, and the
+  // client's request helper discards the body of a non-2xx response.
+  res.json(await publishProducts());
+});
+
+productsRouter.get('/publish/status', (_req, res) => {
+  res.json({ running: isPublishing() });
 });
 
 productsRouter.get('/:id', (req, res) => {

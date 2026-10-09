@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
-import { fetchProducts, fetchProductCategories, setProductStatus, deleteProduct } from './api';
+import { fetchProducts, fetchProductCategories, setProductStatus, deleteProduct, publishProducts } from './api';
+import type { PublishResult } from './api';
 import type { ProductListItem } from '../../shared/types/product';
 import type { Theme } from '../../shared/types/content';
 import { fetchThemes } from '../content/api';
@@ -29,6 +30,8 @@ export function ProductsList() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [flash, setFlash] = useState<string | null>((location.state as { flash?: string } | null)?.flash ?? null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
 
   const load = useCallback(() => {
     setIsLoading(true);
@@ -75,6 +78,34 @@ export function ProductsList() {
     }
   }
 
+  /**
+   * Sends every active product to EveryFiveDays. It changes the live site, so
+   * it asks first; the result — including the commands' own output when
+   * something fails — stays on screen until dismissed.
+   */
+  async function handlePublish() {
+    if (
+      !window.confirm(
+        'Publish all active products to EveryFiveDays?\n\nThis updates the live site: links, picks, badges, descriptions and images. The site keeps a backup of what it replaces.',
+      )
+    ) {
+      return;
+    }
+    setIsPublishing(true);
+    setPublishResult(null);
+    try {
+      setPublishResult(await publishProducts());
+    } catch (err) {
+      setPublishResult({
+        ok: false,
+        steps: [],
+        summary: err instanceof ApiError ? err.errors.join(' ') : 'Could not reach Cynth to publish.',
+      });
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
   async function handleDelete(product: ProductListItem) {
     if (!window.confirm(`Delete ${product.title}? This also deletes its images.`)) return;
     setBusyId(product.id);
@@ -101,10 +132,37 @@ export function ProductsList() {
 
       <div className="products-list__header">
         <PageHeader title="Products" description="Reference data for products mentioned or reviewed in articles." />
-        <Link to="/products/new" className="button button--primary">
-          Add Product
-        </Link>
+        <div className="products-list__actions">
+          <button type="button" className="button" onClick={handlePublish} disabled={isPublishing}>
+            {isPublishing ? 'Publishing… (about a minute)' : 'Publish products to EveryFiveDays'}
+          </button>
+          <Link to="/products/new" className="button button--primary">
+            Add Product
+          </Link>
+        </div>
       </div>
+
+      {publishResult && (
+        <div className={publishResult.ok ? 'flash-banner' : 'form-error'} role="status">
+          <p className="products-list__publish-summary">{publishResult.summary}</p>
+          {!publishResult.ok && publishResult.steps.length > 0 && (
+            <details>
+              <summary>Details</summary>
+              {publishResult.steps.map((step) => (
+                <div key={step.name}>
+                  <strong>
+                    {step.ok ? '✓' : '✗'} {step.name}
+                  </strong>
+                  <pre className="products-list__publish-output">{step.output}</pre>
+                </div>
+              ))}
+            </details>
+          )}
+          <button type="button" onClick={() => setPublishResult(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="products-list__filters">
         <input

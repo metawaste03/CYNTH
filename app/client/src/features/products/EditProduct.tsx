@@ -49,6 +49,7 @@ export function EditProduct() {
           brand: product.brand ?? '',
           category: product.category ?? '',
           isFeaturedPick: product.isFeaturedPick ?? false,
+          pickBadge: product.pickBadge ?? '',
           shortDescription: product.shortDescription ?? '',
           description: product.description ?? '',
           affiliateLink: product.affiliateLink ?? '',
