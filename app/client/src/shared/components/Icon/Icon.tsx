@@ -13,9 +13,11 @@ export type IconName =
   | 'products'
   | 'seoReview'
   | 'qualityGate'
+  | 'coverage'
   | 'settings'
   | 'system'
   | 'site'
+  | 'media'
   | 'menu'
   | 'close';
 
@@ -82,6 +84,16 @@ export function Icon({ name, ...rest }: IconProps) {
           <path d="m9 12 2 2 4-4.5" />
         </svg>
       );
+    case 'coverage':
+      // Linked nodes: the coverage graph.
+      return (
+        <svg {...shared} {...rest} aria-hidden="true">
+          <circle cx="6" cy="7" r="2.25" />
+          <circle cx="18" cy="6" r="2.25" />
+          <circle cx="12" cy="17.5" r="2.25" />
+          <path d="M8.1 7.9 10.6 15.6M15.9 7.2 13.4 15.6M8.2 6.8l7.6-.6" />
+        </svg>
+      );
     case 'settings':
       return (
         <svg {...shared} {...rest} aria-hidden="true">
@@ -113,6 +125,14 @@ export function Icon({ name, ...rest }: IconProps) {
           <line x1="4" y1="6.5" x2="20" y2="6.5" />
           <line x1="4" y1="12" x2="20" y2="12" />
           <line x1="4" y1="17.5" x2="20" y2="17.5" />
+        </svg>
+      );
+    case 'media':
+      return (
+        <svg {...shared} {...rest} aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <circle cx="8.5" cy="10" r="1.6" />
+          <path d="M3.5 16.5 9 12l4 3.5 3-2.5 4.5 3.5" />
         </svg>
       );
     case 'close':

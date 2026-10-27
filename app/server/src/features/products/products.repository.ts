@@ -1,11 +1,29 @@
 import { getDatabase } from '../../shared/database/index.js';
 import type { ProductRow, ProductImageRow } from '../../shared/database/types.js';
-import type { ProductInput } from './products.validation.js';
+import type { PickBadge, ProductInput } from './products.validation.js';
+import { isPickBadge } from './products.validation.js';
+import { deriveVendor } from './vendor.service.js';
 
 export interface ProductListFilters {
   search?: string;
   category?: string;
+  /** Show this product in its category's picks row on the site. */
+  isFeaturedPick?: boolean;
   status?: 'active' | 'inactive';
+  /** Filter to one thematic area (Milestone 18). 'none' lists products with no area chosen. */
+  themeId?: number | 'none';
+}
+
+/** Resolves theme names for a set of products in one query, rather than one per row. */
+function themeNamesFor(themeIds: (number | null)[]): Map<number, string> {
+  const distinct = [...new Set(themeIds.filter((id): id is number => id !== null))];
+  if (!distinct.length) return new Map();
+
+  const db = getDatabase();
+  const rows = db
+    .prepare(`SELECT id, name FROM themes WHERE id IN (${distinct.map(() => '?').join(', ')})`)
+    .all(...distinct) as unknown as { id: number; name: string }[];
+  return new Map(rows.map((row) => [row.id, row.name]));
 }
 
 export interface ProductImageDto {
@@ -22,12 +40,32 @@ export interface ProductDto {
   title: string;
   brand: string | null;
   category: string | null;
+  isFeaturedPick: boolean;
+  /** The editors' review badge: 'editors-pick' | 'best-value' | 'upgrade-pick', or null for none. */
+  pickBadge: PickBadge | null;
   shortDescription: string | null;
   description: string | null;
+  /** THE USER'S LINK. Supplied by them, stored verbatim, never rewritten by research. */
   affiliateLink: string | null;
   editorialFit: string | null;
   notes: string | null;
   isActive: boolean;
+  /* --- Product research (Milestone 17). Null until a product has been researched. --- */
+  /** The page that was read for research. Never used as a link in an article — that is affiliateLink's job. */
+  sourceUrl: string | null;
+  vendor: string | null;
+  /** The image the source page published about itself. An uploaded image always wins over it. */
+  sourceImageUrl: string | null;
+  useCase: string | null;
+  problemSolved: string | null;
+  bestFor: string | null;
+  keyFeatures: string[];
+  researchStatus: 'none' | 'retrieved' | 'researched' | 'failed';
+  researchedAt: string | null;
+  /** The thematic area this product belongs to (Milestone 18). Null means none chosen. */
+  themeId: number | null;
+  /** Resolved for display, so a list does not need a second query per row. */
+  themeName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,21 +84,55 @@ export interface NewImageInput {
   isPrimary?: boolean;
 }
 
+/** The stored badge, or null when there is none or the value is not one Cynth knows. */
+function readPickBadge(row: ProductRow): PickBadge | null {
+  const value = (row as unknown as { pick_badge?: unknown }).pick_badge;
+  return isPickBadge(value) ? value : null;
+}
+
 function mapProduct(row: ProductRow): ProductDto {
   return {
     id: row.id,
     title: row.title,
     brand: row.brand,
     category: row.category,
+    isFeaturedPick: Number((row as { is_featured_pick?: number }).is_featured_pick ?? 0) === 1,
+    pickBadge: readPickBadge(row),
     shortDescription: row.short_description,
     description: row.description,
     affiliateLink: row.affiliate_link,
     editorialFit: row.editorial_fit,
     notes: row.notes,
     isActive: row.is_active === 1,
+    sourceUrl: row.source_url ?? null,
+    vendor: row.vendor ?? null,
+    sourceImageUrl: row.source_image_url ?? null,
+    useCase: row.use_case ?? null,
+    problemSolved: row.problem_solved ?? null,
+    bestFor: row.best_for ?? null,
+    keyFeatures: parseFeatures(row.key_features),
+    researchStatus: readResearchStatus(row.research_status),
+    researchedAt: row.researched_at ?? null,
+    themeId: row.theme_id ?? null,
+    themeName: null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** Stored as JSON. A malformed value reads as "no features" rather than failing the whole product. */
+function parseFeatures(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function readResearchStatus(raw: string | null | undefined): ProductDto['researchStatus'] {
+  return raw === 'retrieved' || raw === 'researched' || raw === 'failed' ? raw : 'none';
 }
 
 function mapImage(row: ProductImageRow): ProductImageDto {
@@ -101,6 +173,12 @@ export function listProducts(filters: ProductListFilters): ProductListItemDto[] 
   } else if (filters.status === 'inactive') {
     clauses.push('is_active = 0');
   }
+  if (filters.themeId === 'none') {
+    clauses.push('theme_id IS NULL');
+  } else if (typeof filters.themeId === 'number') {
+    clauses.push('theme_id = ?');
+    params.push(filters.themeId);
+  }
 
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
   const rows = db
@@ -111,8 +189,13 @@ export function listProducts(filters: ProductListFilters): ProductListItemDto[] 
     .prepare('SELECT * FROM product_images WHERE is_primary = 1')
     .all() as unknown as ProductImageRow[];
   const primaryByProductId = new Map(primaryImages.map((row) => [row.product_id, mapImage(row)]));
+  const themeNames = themeNamesFor(rows.map((row) => row.theme_id ?? null));
 
-  return rows.map((row) => ({ ...mapProduct(row), primaryImage: primaryByProductId.get(row.id) ?? null }));
+  return rows.map((row) => ({
+    ...mapProduct(row),
+    themeName: row.theme_id === null ? null : themeNames.get(row.theme_id) ?? null,
+    primaryImage: primaryByProductId.get(row.id) ?? null,
+  }));
 }
 
 export function listDistinctCategories(): string[] {
@@ -127,15 +210,39 @@ export function getProductById(id: number): ProductDetailDto | null {
   const db = getDatabase();
   const row = db.prepare('SELECT * FROM products WHERE id = ?').get(id) as unknown as ProductRow | undefined;
   if (!row) return null;
-  return { ...mapProduct(row), images: getImagesForProduct(id) };
+  return {
+    ...mapProduct(row),
+    themeName: row.theme_id === null ? null : themeNamesFor([row.theme_id]).get(row.theme_id) ?? null,
+    images: getImagesForProduct(id),
+  };
+}
+
+/**
+ * Sets or clears a product's thematic area.
+ *
+ * Its own operation, like author/theme assignment, because it is a
+ * relationship rather than a field on a form — and because clearing it must be
+ * expressible without submitting the whole product.
+ */
+export function setProductTheme(id: number, themeId: number | null): ProductDetailDto | { error: string } | null {
+  const db = getDatabase();
+  if (!db.prepare('SELECT id FROM products WHERE id = ?').get(id)) return null;
+
+  if (themeId !== null && !db.prepare('SELECT id FROM themes WHERE id = ?').get(themeId)) {
+    return { error: 'Thematic area not found.' };
+  }
+
+  db.prepare(`UPDATE products SET theme_id = ?, updated_at = datetime('now') WHERE id = ?`).run(themeId, id);
+  return getProductById(id);
 }
 
 export function createProduct(input: ProductInput): ProductDetailDto {
   const db = getDatabase();
   const insert = db.prepare(`
     INSERT INTO products (
-      title, brand, category, short_description, description, affiliate_link, editorial_fit, notes, is_active
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      title, brand, category, short_description, description, affiliate_link, editorial_fit, notes, is_active, theme_id,
+      use_case, problem_solved, best_for, key_features, vendor, is_featured_pick, pick_badge
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = insert.run(
     input.title,
@@ -147,6 +254,16 @@ export function createProduct(input: ProductInput): ProductDetailDto {
     input.editorialFit ?? null,
     input.notes ?? null,
     input.isActive === false ? 0 : 1,
+    input.themeId ?? null,
+    input.useCase ?? null,
+    input.problemSolved ?? null,
+    input.bestFor ?? null,
+    input.keyFeatures?.length ? JSON.stringify(input.keyFeatures) : null,
+    // Read from the link rather than asked for: the affiliate URL is the only
+    // authoritative statement of where a reader is being sent.
+    deriveVendor(input.affiliateLink)?.slug ?? null,
+    input.isFeaturedPick ? 1 : 0,
+    input.pickBadge ?? null,
   );
   return getProductById(Number(result.lastInsertRowid))!;
 }
@@ -159,7 +276,24 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
   db.prepare(`
     UPDATE products SET
       title = ?, brand = ?, category = ?, short_description = ?, description = ?,
-      affiliate_link = ?, editorial_fit = ?, notes = ?, updated_at = datetime('now')
+      affiliate_link = ?, editorial_fit = ?, notes = ?, theme_id = ?,
+      -- Re-derived on every save, because the link is where it comes from:
+      -- change the affiliate URL to a different shop and the button must
+      -- follow it rather than keep naming the old one.
+      vendor = ?,
+      -- Undefined leaves the flag alone, so a form that does not send it
+      -- cannot silently unpick a product.
+      is_featured_pick = COALESCE(?, is_featured_pick),
+      -- Not COALESCE: "no badge" is a real value, so whether a badge was sent
+      -- at all travels as its own flag. Unsent leaves it; null clears it.
+      pick_badge = CASE WHEN ? THEN ? ELSE pick_badge END,
+      -- Undefined leaves what is there alone, so saving the form does not wipe
+      -- fields that product research wrote and the form did not send.
+      use_case = COALESCE(?, use_case),
+      problem_solved = COALESCE(?, problem_solved),
+      best_for = COALESCE(?, best_for),
+      key_features = COALESCE(?, key_features),
+      updated_at = datetime('now')
     WHERE id = ?
   `).run(
     input.title,
@@ -170,10 +304,50 @@ export function updateProduct(id: number, input: ProductInput): ProductDetailDto
     input.affiliateLink ?? null,
     input.editorialFit ?? null,
     input.notes ?? null,
+    input.themeId ?? null,
+    deriveVendor(input.affiliateLink)?.slug ?? null,
+    input.isFeaturedPick === undefined ? null : input.isFeaturedPick ? 1 : 0,
+    input.pickBadge === undefined ? 0 : 1,
+    input.pickBadge ?? null,
+    // undefined -> NULL -> COALESCE keeps the stored value. An empty string is
+    // a deliberate clear and is written as one.
+    input.useCase ?? null,
+    input.problemSolved ?? null,
+    input.bestFor ?? null,
+    input.keyFeatures === undefined ? null : JSON.stringify(input.keyFeatures),
     id,
   );
 
   return getProductById(id);
+}
+
+/**
+ * Gives a vendor to every product saved before the column was written to.
+ *
+ * Idempotent, and it only fills blanks: a vendor an editor set by hand is
+ * never overwritten by one read from a URL.
+ *
+ * This is not a migration for a schema change — the column has existed all
+ * along. Nothing had ever written to it, so every row was NULL and every
+ * product card on the site read "Check price" instead of naming the shop.
+ */
+export function backfillMissingVendors(): number {
+  const db = getDatabase();
+  const rows = db
+    .prepare("SELECT id, affiliate_link FROM products WHERE (vendor IS NULL OR trim(vendor) = '')")
+    .all() as { id: number; affiliate_link: string | null }[];
+
+  const update = db.prepare('UPDATE products SET vendor = ? WHERE id = ?');
+  let filled = 0;
+
+  for (const row of rows) {
+    const vendor = deriveVendor(row.affiliate_link);
+    if (!vendor) continue;
+    update.run(vendor.slug, row.id);
+    filled += 1;
+  }
+
+  return filled;
 }
 
 export function setProductActiveStatus(id: number, isActive: boolean): ProductDetailDto | null {

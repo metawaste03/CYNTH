@@ -48,12 +48,22 @@ export function EditProduct() {
           title: product.title,
           brand: product.brand ?? '',
           category: product.category ?? '',
+          isFeaturedPick: product.isFeaturedPick ?? false,
+          pickBadge: product.pickBadge ?? '',
           shortDescription: product.shortDescription ?? '',
           description: product.description ?? '',
           affiliateLink: product.affiliateLink ?? '',
           editorialFit: product.editorialFit ?? '',
           notes: product.notes ?? '',
           isActive: product.isActive,
+          themeId: product.themeId === null ? '' : String(product.themeId),
+          // Seeded from whatever is stored, whether a person wrote it or
+          // product research did — so editing does not silently discard
+          // research findings, and research findings can be corrected.
+          useCase: product.useCase ?? '',
+          problemSolved: product.problemSolved ?? '',
+          bestFor: product.bestFor ?? '',
+          keyFeatures: product.keyFeatures.join('\n'),
         }}
         onSubmit={async (input) => {
           const updated = await updateProduct(productId, input);

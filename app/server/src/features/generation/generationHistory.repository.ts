@@ -19,10 +19,42 @@ export interface GenerationHistoryMetadata {
   reportedModel?: string | null;
   generatedCharacterCount?: number;
   titleDetected?: boolean;
+  /** Reproducibility: the prompt structure, mode and cost class this attempt ran under. */
+  promptVersion?: string;
+  generationMode?: string;
+  costClass?: string;
+  /** Whether the model came from an explicit user choice or the configured purpose default. */
+  modelSelection?: 'explicit' | 'default';
+  /** Product research (Milestone 17): which product an attempt was about, when it was not about an article. */
+  productId?: number;
+  productTitle?: string;
+  /** The editorial pipeline this attempt belonged to (Milestone 20). */
+  pipelineId?: number;
+  stage?: string;
+  /** True when a technical fallback model answered instead of the requested one. */
+  wasFallback?: boolean;
+  /**
+   * Featured image generation (Milestone 25).
+   *
+   * Images are billed per image, not per token, so the charge cannot live in
+   * the token columns. It is recorded here as the figure the PROVIDER
+   * reported, with `costBasis` saying so — an unreported cost is 'unreported'
+   * and stays null, never rounded down to zero.
+   */
+  images?: number;
+  reportedCostUsd?: number | null;
+  costBasis?: 'provider_reported' | 'unreported';
 }
 
 export interface RecordGenerationInput {
-  articleId: number;
+  /**
+   * Null for work that is not about one article.
+   *
+   * Product research is the first such task: researching a product happens
+   * before, and independently of, any article that might use it. The column
+   * has always been nullable; until Milestone 17 nothing wrote null to it.
+   */
+  articleId: number | null;
   taskType: string;
   providerName: string | null;
   providerType: string | null;
@@ -51,7 +83,28 @@ export interface GenerationHistoryEntryDto {
   completionTokens: number | null;
   totalTokens: number | null;
   durationMs: number | null;
+  /**
+   * The small fixed metadata summary recorded with the attempt. Exposed
+   * (Milestone 15) so the Quality Gate can read the provider's own
+   * `finishReason` — "it stopped because it hit the output limit" is the
+   * difference between a short article and a truncated one, and only the
+   * provider knows which happened.
+   *
+   * Contains no credential and no provider payload; see recordGeneration().
+   */
+  metadata: GenerationHistoryMetadata | null;
   createdAt: string;
+}
+
+/** A stored metadata blob back into an object. A malformed blob must not break reading the history it belongs to. */
+function parseMetadata(raw: string | null): GenerationHistoryMetadata | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as GenerationHistoryMetadata) : null;
+  } catch {
+    return null;
+  }
 }
 
 function mapEntry(row: GenerationHistoryRow): GenerationHistoryEntryDto {
@@ -69,6 +122,7 @@ function mapEntry(row: GenerationHistoryRow): GenerationHistoryEntryDto {
     completionTokens: row.completion_tokens,
     totalTokens: row.total_tokens,
     durationMs: row.duration_ms,
+    metadata: parseMetadata(row.payload),
     createdAt: row.created_at,
   };
 }

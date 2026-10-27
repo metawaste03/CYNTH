@@ -18,34 +18,31 @@ See [docs/00_PROJECT_VISION.md](docs/00_PROJECT_VISION.md) for the full vision.
 
 Cynth is built documentation-first. Requirements are never invented — where information is missing, it is marked `TODO` rather than guessed at. Development proceeds in discrete, bounded milestones; each milestone has an explicit stopping point and requires review before the next begins. See [docs/04_DEVELOPMENT_RULES.md](docs/04_DEVELOPMENT_RULES.md) for the full rule set.
 
-## Current Milestone
+## Current State
 
-**Milestone 0: Project Binder.**
+**Updated 2026-10-07 — Milestone 43 complete, changelog at 0.54.0.** Cynth is a working editorial engine: it researches, drafts, illustrates and SEO-checks articles in five author voices, keeps a product catalogue, and pushes **drafts** to EveryFiveDays — the local install or the live site at https://everyfivedays.com — along with Rank Math metadata and featured images. It also writes EveryFiveDays' product registry (`npm --prefix app/server run export:registry`). Nothing it does can publish; a human publishes in WordPress.
 
-This milestone's sole deliverable is this documentation structure: the folder layout and the populated markdown files under `docs/`, plus the placeholder directories under `prompts/`, `data/`, `app/`, and `database/`. No application code, dependencies, database, or AI implementation exists yet. See [docs/13_MILESTONES.md](docs/13_MILESTONES.md) for milestone tracking.
+Server: 542 tests pass, `tsc` clean. Client: `tsc` clean.
+
+The milestone-by-milestone record is [docs/13_MILESTONES.md](docs/13_MILESTONES.md); what changed and when is [docs/CHANGELOG.md](docs/CHANGELOG.md). How to run it is [app/README.md](app/README.md). The EveryFiveDays site it writes for is a separate repository at `C:\Users\MetaWaste\OneDrive\Desktop\CLAUDE\Everyfivedays`.
 
 ## Folder Structure
 
 ```
 CYNTH/
-├── docs/                      Project documentation (this binder)
-├── prompts/                   Reserved for future prompt libraries, organized by task
-│   ├── article_generation/
-│   ├── keyword_generation/
-│   ├── quality_gate/
-│   ├── rewrite/
-│   ├── seo_review/
-│   └── title_generation/
-├── data/                      Reserved for editorial reference data
-│   ├── article_types/
-│   ├── authors/
-│   └── products/
-├── app/                       Reserved for the application layer (not yet implemented)
-├── database/                  Reserved for persistence layer (not yet implemented)
-└── README.md                  This file
+├── docs/        Project binder — vision, rules, architecture, milestones, changelog
+├── app/
+│   ├── client/  React + TypeScript (Vite) — the editorial workspace
+│   └── server/  Node + Express (TypeScript) — API, SQLite, AI generation, CMS push
+├── database/    cynth.db, dated backups, and uploads/ (product and article images)
+├── Author/      Source text for the five author personas
+├── Products/    Product photography, by area
+├── prompts/     Reserved; prompts are assembled in code from the database
+├── data/        Reserved; authors, products and article types live in the database
+└── scripts/     Project-level helper scripts
 ```
 
-All `prompts/`, `data/`, `app/`, and `database/` subdirectories are currently empty by design — populating them with real content is out of scope for Milestone 0.
+`database/` is not versioned (`*.db` and `uploads/` are gitignored) — back it up separately.
 
 ## How Future Milestones Will Work
 

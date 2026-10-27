@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
-import { fetchProducts, fetchProductCategories, setProductStatus, deleteProduct } from './api';
+import { fetchProducts, fetchProductCategories, setProductStatus, deleteProduct, publishProducts } from './api';
+import type { PublishResult } from './api';
 import type { ProductListItem } from '../../shared/types/product';
+import type { Theme } from '../../shared/types/content';
+import { fetchThemes } from '../content/api';
 import { ApiError } from '../../shared/services/apiClient';
 import './ProductsList.css';
 
@@ -20,10 +23,15 @@ export function ProductsList() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'inactive'>('');
+  // '' = any area, 'none' = products with no area chosen, otherwise a theme id.
+  const [themeFilter, setThemeFilter] = useState('');
+  const [themes, setThemes] = useState<Theme[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [flash, setFlash] = useState<string | null>((location.state as { flash?: string } | null)?.flash ?? null);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
 
   const load = useCallback(() => {
     setIsLoading(true);
@@ -32,11 +40,18 @@ export function ProductsList() {
       search: search.trim() || undefined,
       category: categoryFilter || undefined,
       status: statusFilter || undefined,
+      themeId: themeFilter || undefined,
     })
       .then(setProducts)
       .catch((err) => setError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to load products.'))
       .finally(() => setIsLoading(false));
-  }, [search, categoryFilter, statusFilter]);
+  }, [search, categoryFilter, statusFilter, themeFilter]);
+
+  useEffect(() => {
+    fetchThemes({ activeOnly: true })
+      .then(setThemes)
+      .catch(() => setThemes([]));
+  }, []);
 
   useEffect(() => {
     const timeout = setTimeout(load, 250);
@@ -49,7 +64,7 @@ export function ProductsList() {
       .catch(() => undefined);
   }, []);
 
-  const hasFilters = Boolean(search || categoryFilter || statusFilter);
+  const hasFilters = Boolean(search || categoryFilter || statusFilter || themeFilter);
 
   async function handleToggleStatus(product: ProductListItem) {
     setBusyId(product.id);
@@ -60,6 +75,34 @@ export function ProductsList() {
       setError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to update status.');
     } finally {
       setBusyId(null);
+    }
+  }
+
+  /**
+   * Sends every active product to EveryFiveDays. It changes the live site, so
+   * it asks first; the result — including the commands' own output when
+   * something fails — stays on screen until dismissed.
+   */
+  async function handlePublish() {
+    if (
+      !window.confirm(
+        'Publish all active products to EveryFiveDays?\n\nThis updates the live site: links, picks, badges, descriptions and images. The site keeps a backup of what it replaces.',
+      )
+    ) {
+      return;
+    }
+    setIsPublishing(true);
+    setPublishResult(null);
+    try {
+      setPublishResult(await publishProducts());
+    } catch (err) {
+      setPublishResult({
+        ok: false,
+        steps: [],
+        summary: err instanceof ApiError ? err.errors.join(' ') : 'Could not reach Cynth to publish.',
+      });
+    } finally {
+      setIsPublishing(false);
     }
   }
 
@@ -89,10 +132,37 @@ export function ProductsList() {
 
       <div className="products-list__header">
         <PageHeader title="Products" description="Reference data for products mentioned or reviewed in articles." />
-        <Link to="/products/new" className="button button--primary">
-          Add Product
-        </Link>
+        <div className="products-list__actions">
+          <button type="button" className="button" onClick={handlePublish} disabled={isPublishing}>
+            {isPublishing ? 'Publishing… (about a minute)' : 'Publish products to EveryFiveDays'}
+          </button>
+          <Link to="/products/new" className="button button--primary">
+            Add Product
+          </Link>
+        </div>
       </div>
+
+      {publishResult && (
+        <div className={publishResult.ok ? 'flash-banner' : 'form-error'} role="status">
+          <p className="products-list__publish-summary">{publishResult.summary}</p>
+          {!publishResult.ok && publishResult.steps.length > 0 && (
+            <details>
+              <summary>Details</summary>
+              {publishResult.steps.map((step) => (
+                <div key={step.name}>
+                  <strong>
+                    {step.ok ? '✓' : '✗'} {step.name}
+                  </strong>
+                  <pre className="products-list__publish-output">{step.output}</pre>
+                </div>
+              ))}
+            </details>
+          )}
+          <button type="button" onClick={() => setPublishResult(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
 
       <div className="products-list__filters">
         <input
@@ -109,6 +179,20 @@ export function ProductsList() {
               {category}
             </option>
           ))}
+        </select>
+        <select
+          value={themeFilter}
+          onChange={(e) => setThemeFilter(e.target.value)}
+          aria-label="Filter by thematic area"
+        >
+          <option value="">All thematic areas</option>
+          {themes.map((theme) => (
+            <option key={theme.id} value={String(theme.id)}>
+              {theme.name}
+            </option>
+          ))}
+          {/* Its own option because "no area chosen" is a different question from "any area". */}
+          <option value="none">No thematic area</option>
         </select>
         <select
           value={statusFilter}
@@ -143,6 +227,7 @@ export function ProductsList() {
                 <th scope="col">Product Title</th>
                 <th scope="col">Brand</th>
                 <th scope="col">Category</th>
+                <th scope="col">Thematic Area</th>
                 <th scope="col">Status</th>
                 <th scope="col">Last Updated</th>
                 <th scope="col" aria-label="Actions" />
@@ -163,6 +248,7 @@ export function ProductsList() {
                   </td>
                   <td>{product.brand || '—'}</td>
                   <td>{product.category || '—'}</td>
+                  <td>{product.themeName || '—'}</td>
                   <td>
                     <span className={`status-badge ${product.isActive ? 'is-active' : 'is-inactive'}`}>
                       {product.isActive ? 'Active' : 'Inactive'}

@@ -34,3 +34,10 @@ export const DEFAULT_BASE_URLS: Record<string, string> = {
 
 /** Anthropic requires an explicit API version header. */
 export const ANTHROPIC_API_VERSION = '2023-06-01';
+
+/**
+ * Timeout for reading a provider's model catalogue. Much shorter than a
+ * generation: this is a metadata lookup, and a slow one should not hold up
+ * the settings screen.
+ */
+export const CATALOG_TIMEOUT_MS = 20_000;

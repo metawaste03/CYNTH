@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Icon, type IconName } from '../Icon/Icon';
 import './PlaceholderCard.css';
 
@@ -6,12 +7,26 @@ interface PlaceholderCardProps {
   title: string;
   status: string;
   description: string;
+  /**
+   * Optional link to the area that manages this collection.
+   *
+   * The Dashboard summarises a collection; the collection's own page is where
+   * individual records are managed. A card that reports a count is far more
+   * useful when it can also take you to the things it counted.
+   */
+  action?: { label: string; to: string };
 }
 
-/** A single Dashboard summary card. Static content only — no live data. */
-export function PlaceholderCard({ icon, title, status, description }: PlaceholderCardProps) {
-  return (
-    <article className="placeholder-card">
+/**
+ * A single Dashboard summary card.
+ *
+ * Named "Placeholder" when the Dashboard was static; several cards now carry
+ * live database values. Kept as-is rather than renamed, so this change stays
+ * a Dashboard change and not a rename across the codebase.
+ */
+export function PlaceholderCard({ icon, title, status, description, action }: PlaceholderCardProps) {
+  const inner = (
+    <>
       <div className="placeholder-card__icon">
         <Icon name={icon} />
       </div>
@@ -19,7 +34,29 @@ export function PlaceholderCard({ icon, title, status, description }: Placeholde
         <h2>{title}</h2>
         <p>{description}</p>
       </div>
-      <span className="placeholder-card__status">{status}</span>
-    </article>
+      <div className="placeholder-card__footer">
+        <span className="placeholder-card__status">{status}</span>
+        {action && <span className="placeholder-card__action">{action.label}</span>}
+      </div>
+    </>
+  );
+
+  /**
+   * THE WHOLE CARD IS THE TARGET, not the small link in its corner.
+   *
+   * Reported plainly: "I want it to be clickable when I click on it." The card
+   * looked like a button-sized thing and behaved like a paragraph with a link
+   * in it, so the obvious click — anywhere on the card — did nothing. A card
+   * with nowhere to go stays an article element, because making a dead card
+   * look clickable would be the same mistake in reverse.
+   */
+  if (!action) {
+    return <article className="placeholder-card">{inner}</article>;
+  }
+
+  return (
+    <Link className="placeholder-card placeholder-card--link" to={action.to}>
+      {inner}
+    </Link>
   );
 }

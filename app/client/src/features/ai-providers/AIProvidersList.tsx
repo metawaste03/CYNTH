@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
+import { GenerationModeCard } from './GenerationModeCard';
 import { fetchProviders, setProviderStatus, setDefaultProvider, deleteProvider } from './api';
 import type { Provider } from '../../shared/types/aiProvider';
 import { ApiError } from '../../shared/services/apiClient';
@@ -78,12 +79,14 @@ export function AIProvidersList() {
       <div className="ai-providers-list__header">
         <PageHeader
           title="AI Providers"
-          description="Configure the AI providers and models Cynth's future Article Engine will route tasks to. No requests are sent yet."
+          description="Configure the AI providers and models Cynth routes generation tasks to, and whether it may spend money."
         />
         <Link to="/settings/ai-providers/new" className="button button--primary">
           Add Provider
         </Link>
       </div>
+
+      <GenerationModeCard />
 
       {error && (
         <p className="form-error" role="alert">

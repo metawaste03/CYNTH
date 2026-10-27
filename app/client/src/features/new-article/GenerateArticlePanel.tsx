@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchGenerationStatus, generateArticle, fetchGenerationHistory } from './api';
+import { fetchSelectableModels } from '../ai-providers/api';
+import { ModelPicker } from './ModelPicker';
+import { formatCost } from '../ai-providers/pricing';
+import type { SelectableModel } from '../../shared/types/aiProvider';
 import { ApiError } from '../../shared/services/apiClient';
-import type { GeneratedArticle, GenerationPreflight, GenerationHistoryEntry, TokenUsage } from '../../shared/types/generation';
+import type {
+  GeneratedArticle,
+  GenerationPreflight,
+  GenerationHistoryEntry,
+  TokenUsage,
+} from '../../shared/types/generation';
 import './GenerateArticlePanel.css';
 
 /**
@@ -10,8 +19,13 @@ import './GenerateArticlePanel.css';
  *
  * Shows what will be sent and where before anything happens, runs exactly one
  * generation per press, and displays the result saved against the draft.
- * There is no provider picker on purpose: the Model Router decides, from the
- * default model configured for Article Generation.
+ *
+ * The model is selectable (Milestone 13) and its price is stated plainly
+ * beside it. The selection names a registry entry only — the Model Router
+ * still resolves which provider serves it, so the browser never picks an
+ * endpoint or touches a credential. A selected model is the model that runs:
+ * there is no path where Cynth substitutes a different one, and above all
+ * none where a free model quietly becomes a paid one.
  *
  * Generating never publishes anything — the article stays a draft for a human
  * to review.
@@ -85,6 +99,17 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
   const [errors, setErrors] = useState<string[] | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [canRetry, setCanRetry] = useState(false);
+  // Cost confirmation is per attempt and never sticky: it resets whenever the
+  // panel reloads, so a paid generation can never be triggered by a stale tick.
+  const [costConfirmed, setCostConfirmed] = useState(false);
+
+  // The model the user picked, or null to use the configured default for
+  // Article Generation. Held here rather than in the preflight so the
+  // preflight can be re-read *for* the chosen model.
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
+  const [selectableModels, setSelectableModels] = useState<SelectableModel[]>([]);
+  /** The model the configured default resolves to, so the picker can name it. */
+  const [defaultModelLabel, setDefaultModelLabel] = useState<string | null>(null);
 
   const loadHistory = useCallback(() => {
     fetchGenerationHistory(draftId)
@@ -94,22 +119,53 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
 
   // Reloads the preflight check and whatever was last generated, so a browser
   // refresh restores the generated article rather than losing it.
+  //
+  // Re-runs whenever the selected model changes: the provider, the price and
+  // the spend decision all belong to the model, so switching models must
+  // re-ask the server rather than leaving stale figures on screen.
   useEffect(() => {
     setIsLoading(true);
     setLoadError(null);
+    // Any earlier confirmation applied to the previous model. Switching models
+    // is a new spending decision.
+    setCostConfirmed(false);
 
-    fetchGenerationStatus(draftId)
+    fetchGenerationStatus(draftId, selectedModelId)
       .then((status) => {
         setPreflight(status.preflight);
         setGeneration(status.generation);
+        // Remember what the default resolves to, from the one request that
+        // asked for the default.
+        if (selectedModelId === null && status.preflight.model) {
+          setDefaultModelLabel(status.preflight.model.displayName || status.preflight.model.modelName);
+        }
       })
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.errors.join(' ') : 'Failed to check generation readiness.');
       })
       .finally(() => setIsLoading(false));
+  }, [draftId, selectedModelId]);
 
+  useEffect(() => {
     loadHistory();
-  }, [draftId, loadHistory]);
+  }, [loadHistory]);
+
+  /**
+   * The models available to choose from.
+   *
+   * PURPOSE FILTERING (Milestone 15): only models registered for Article
+   * Generation. An SEO reviewer is a different job with a different best
+   * answer, and offering every registered model here hid that — the whole
+   * reason a model now carries a capability set.
+   *
+   * A failure here is not fatal: without a picker the configured default
+   * still works.
+   */
+  useEffect(() => {
+    fetchSelectableModels('article_generation')
+      .then(setSelectableModels)
+      .catch(() => setSelectableModels([]));
+  }, []);
 
   async function handleGenerate() {
     // Belt and braces alongside the disabled button — the server also refuses
@@ -122,11 +178,11 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
     setCanRetry(false);
 
     try {
-      const result = await generateArticle(draftId);
+      const result = await generateArticle(draftId, costConfirmed, selectedModelId);
       setGeneration(result.generation);
       setUsage(result.usage);
       // Re-run the readiness check so the panel reflects the current state.
-      fetchGenerationStatus(draftId)
+      fetchGenerationStatus(draftId, selectedModelId)
         .then((status) => setPreflight(status.preflight))
         .catch(() => undefined);
     } catch (err) {
@@ -140,6 +196,8 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
       }
     } finally {
       setIsGenerating(false);
+      // Require a fresh decision for any subsequent paid attempt.
+      setCostConfirmed(false);
       loadHistory();
     }
   }
@@ -169,9 +227,19 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
     <section className="generate-panel">
       <h3>Generate Article</h3>
       <p className="generate-panel__hint">
-        Cynth sends the assembled prompt to the model configured for Article Generation. The result is saved as a draft
-        for you to review — nothing is published.
+        Cynth sends the assembled prompt to the model you choose below. The result is saved as a draft for you to
+        review — nothing is published.
       </p>
+
+      {/* MODEL SELECTION. The price of the choice is shown with the choice,
+          never behind it. */}
+      <ModelPicker
+        models={selectableModels}
+        value={selectedModelId}
+        onChange={setSelectedModelId}
+        disabled={isGenerating}
+        defaultModelLabel={defaultModelLabel}
+      />
 
       <dl className="generate-panel__summary">
         <SummaryRow label="Selected Provider" value={providerLabel} />
@@ -198,12 +266,78 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
         </div>
       )}
 
+      {/* GENERATION PLAN — what Cynth is about to do, and what it may cost,
+          shown before the user can commit to anything. */}
+      <div className={`generate-panel__plan is-${preflight.costClass}`}>
+        <p className="generate-panel__plan-head">
+          <strong>{preflight.mode === 'test' ? 'Test mode' : 'Production mode'}</strong>
+          {' · '}
+          {preflight.costClass === 'free'
+            ? 'Free model'
+            : preflight.costClass === 'paid'
+              ? 'Paid model'
+              : 'Pricing unknown — treated as paid'}
+        </p>
+
+        {preflight.cost && (
+          <p className="generate-panel__plan-cost">
+            {preflight.cost.totalCost !== null ? (
+              <>
+                Estimated cost: <strong>{formatCost(preflight.cost.totalCost)}</strong>{' '}
+                <span className="generate-panel__hint">
+                  (~{preflight.cost.promptTokens?.toLocaleString()} prompt +{' '}
+                  {preflight.cost.estimatedCompletionTokens?.toLocaleString()} output tokens)
+                </span>
+              </>
+            ) : (
+              <>Estimated cost: <strong>unavailable</strong></>
+            )}
+          </p>
+        )}
+
+        {preflight.cost && <p className="generate-panel__hint">{preflight.cost.note}</p>}
+
+        {preflight.spend && !preflight.spend.allowed && preflight.spend.reason && (
+          <p className={preflight.spend.requiresConfirmation ? 'generate-panel__hint' : 'form-error'} role="note">
+            {preflight.spend.reason}
+          </p>
+        )}
+
+        {/* FREE MODEL SAFETY, stated where the decision is made. Cynth has no
+            fallback path at all: a failed free model is an error to report,
+            never a reason to try a paid one. */}
+        {preflight.costClass === 'free' && (
+          <p className="generate-panel__hint">
+            Cynth will use this model and no other. If it fails, generation fails — Cynth never switches to a
+            different model, and never to a paid one.
+          </p>
+        )}
+
+        {/* A paid generation cannot start until this is deliberately ticked.
+            There is no path where Cynth substitutes a free model instead. */}
+        {preflight.spend?.requiresConfirmation && (
+          <label className="generate-panel__confirm">
+            <input
+              type="checkbox"
+              checked={costConfirmed}
+              onChange={(e) => setCostConfirmed(e.target.checked)}
+            />
+            I understand this will use a paid model and may charge my provider account.
+          </label>
+        )}
+      </div>
+
       <div className="generate-panel__actions">
         <button
           type="button"
           className="button button--primary"
           onClick={handleGenerate}
-          disabled={!preflight.ready || isGenerating}
+          disabled={
+            !preflight.ready ||
+            isGenerating ||
+            (preflight.spend?.requiresConfirmation === true && !costConfirmed) ||
+            (preflight.spend?.allowed === false && preflight.spend?.requiresConfirmation === false)
+          }
         >
           {isGenerating ? 'Generating…' : generation ? 'Generate Again' : 'Generate Article'}
         </button>
@@ -268,6 +402,13 @@ export function GenerateArticlePanel({ draftId, workingTitle }: GenerateArticleP
 
           <p className="generate-panel__hint">
             This is an AI-generated draft. It stays unpublished until you review and approve it.
+          </p>
+
+          {/* The wizard's state is not the article store — the database is.
+              This links to the persisted Article record, which stays findable
+              from the Dashboard and Drafts long after the wizard is closed. */}
+          <p className="generate-panel__settings-link">
+            <Link to={`/articles/${draftId}`}>Open the saved draft &rarr;</Link>
           </p>
         </article>
       )}

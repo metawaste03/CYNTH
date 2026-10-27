@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from '../Sidebar/Sidebar';
 import { Icon } from '../Icon/Icon';
+import { ServerHealth } from '../ServerHealth/ServerHealth';
 import './AppShell.css';
 
 /**
@@ -56,6 +57,9 @@ export function AppShell() {
             <Icon name={isNavOpen ? 'close' : 'menu'} />
           </button>
           <span className="app-shell__topbar-title">Cynth</span>
+          {/* Backend status. Present on every screen so a stopped server is
+              never mistaken for a rejected request. */}
+          <ServerHealth />
         </header>
 
         <main className="app-shell__content" id="main-content" tabIndex={-1}>

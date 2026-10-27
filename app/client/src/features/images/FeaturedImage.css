@@ -1,0 +1,87 @@
+/*
+ * The featured-image panel.
+ *
+ * A grid of pictures with their reasoning underneath, because the point of
+ * the suggestions is that they are explained. Nothing here is decorative:
+ * the reasons list is why an editor can trust a ranking they did not compute.
+ */
+.featured-image__subhead {
+  margin: 1.6rem 0 0.6rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+
+.featured-image__current {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.featured-image__current img {
+  width: 220px;
+  max-width: 40%;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.featured-image__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.featured-image__grid li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.featured-image__grid img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--color-surface-muted);
+}
+
+.featured-image__reasons {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  opacity: 0.8;
+  flex: 1;
+}
+
+.featured-image__controls {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.featured-image__steer {
+  flex: 1;
+  min-width: 260px;
+}
+
+.featured-image__prompt {
+  margin-top: 1rem;
+  padding: 0.8rem;
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  max-height: 20rem;
+  overflow: auto;
+}

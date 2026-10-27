@@ -4,6 +4,7 @@ import { PageHeader } from '../../shared/components/PageHeader/PageHeader';
 import { ArticleTypeCard } from './ArticleTypeCard';
 import { AuthorPicker } from './AuthorPicker';
 import { ProductPicker } from './ProductPicker';
+import { ArticleProductsPanel } from '../product-research/ArticleProductsPanel';
 import { ContentBriefFields } from './ContentBriefFields';
 import { EditorialReviewSummary } from './EditorialReviewSummary';
 import { ComingSoonButton } from './ComingSoonButton';
@@ -11,6 +12,10 @@ import { GenerateArticlePanel } from './GenerateArticlePanel';
 import { StepIndicator, STEP_LABELS } from './StepIndicator';
 import { fetchArticleTypes, fetchArticleDraft, createArticleDraft, updateArticleDraft } from './api';
 import { fetchAuthor } from '../authors/api';
+import { fetchAuthorSkills } from '../author-skills/api';
+import type { AuthorSkillSummary } from '../../shared/types/authorSkill';
+import { fetchProjects, fetchThemes, fetchTheme } from '../content/api';
+import type { Theme, Topic } from '../../shared/types/content';
 import { fetchProduct } from '../products/api';
 import type { ArticleType } from '../../shared/types/articleType';
 import type { ArticleDraftInput } from '../../shared/types/article';
@@ -22,6 +27,9 @@ import './NewArticle.css';
 interface WizardFields {
   articleTypeId: number | null;
   authorId: number | null;
+  projectId: number | null;
+  themeId: number | null;
+  topicId: number | null;
   productId: number | null;
   topic: string;
   title: string;
@@ -38,6 +46,9 @@ interface WizardFields {
 const EMPTY_FIELDS: WizardFields = {
   articleTypeId: null,
   authorId: null,
+  projectId: null,
+  themeId: null,
+  topicId: null,
   productId: null,
   topic: '',
   title: '',
@@ -63,6 +74,8 @@ export function NewArticle() {
   const [fields, setFields] = useState<WizardFields>(EMPTY_FIELDS);
   const [articleTypes, setArticleTypes] = useState<ArticleType[]>([]);
   const [authorDetail, setAuthorDetail] = useState<Author | null>(null);
+  /** The selected author's active skill documents. Null while unknown or unresolved. */
+  const [authorSkills, setAuthorSkills] = useState<AuthorSkillSummary[] | null>(null);
   const [productDetail, setProductDetail] = useState<ProductDetail | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -91,6 +104,9 @@ export function NewArticle() {
           setFields({
             articleTypeId: draft.articleTypeId,
             authorId: draft.authorId,
+            projectId: draft.projectId ?? null,
+            themeId: draft.themeId ?? null,
+            topicId: draft.topicId ?? null,
             productId: draft.productId,
             topic: draft.topic ?? '',
             title: draft.title ?? '',
@@ -117,15 +133,75 @@ export function NewArticle() {
       .finally(() => setIsLoading(false));
   }, [draftId]);
 
+  // ---- Content configuration: Project -> Theme -> Topic -> Author ----------
+  // The dropdowns below are a convenience. The backend independently rejects
+  // a topic from the wrong thematic area or an author who does not cover it.
+  const [themes, setThemes] = useState<Theme[]>([]);
+  const [themeTopics, setThemeTopics] = useState<Topic[]>([]);
+  const [themeAuthorIds, setThemeAuthorIds] = useState<number[] | null>(null);
+
+  // The default project is adopted automatically - Cynth has one content
+  // universe today, and asking the user to pick it would be noise.
+  useEffect(() => {
+    fetchProjects()
+      .then((r) => {
+        if (!r.default) return;
+        const defaultProject = r.default;
+        setFields((current) => (current.projectId ? current : { ...current, projectId: defaultProject.id }));
+        return fetchThemes({ projectId: defaultProject.id, activeOnly: true }).then(setThemes);
+      })
+      .catch(() => setThemes([]));
+  }, []);
+
+  // Selecting a thematic area determines which topics and authors are offered.
+  useEffect(() => {
+    if (fields.themeId === null) {
+      setThemeTopics([]);
+      setThemeAuthorIds(null);
+      return;
+    }
+    fetchTheme(fields.themeId)
+      .then((detail) => {
+        setThemeTopics(detail.topics.filter((t) => t.isActive));
+        // No authors configured for an area means "no restriction", matching
+        // the backend rule rather than silently offering nobody.
+        const assigned = detail.authors.filter((a) => a.isActive);
+        setThemeAuthorIds(detail.authors.length ? detail.authors.map((a) => a.id) : null);
+
+        // The thematic area identifies its author (Milestone 16). One active
+        // author assigned to the area means there is nothing to choose, so it
+        // is chosen — the picker stays below, and the choice is overridable.
+        //
+        // Only when the area has exactly one: the schema allows several
+        // authors per area on purpose, and picking between them is an
+        // editorial decision Cynth does not make. An author already chosen is
+        // never replaced.
+        if (assigned.length === 1) {
+          setFields((current) => (current.authorId === null ? { ...current, authorId: assigned[0].id } : current));
+        }
+      })
+      .catch(() => {
+        setThemeTopics([]);
+        setThemeAuthorIds(null);
+      });
+  }, [fields.themeId]);
+
   // Keep the read-only author detail (for step 2 and the review) in sync with the selection.
   useEffect(() => {
     if (fields.authorId === null) {
       setAuthorDetail(null);
+      setAuthorSkills(null);
       return;
     }
     fetchAuthor(fields.authorId)
       .then(setAuthorDetail)
       .catch(() => setAuthorDetail(null));
+
+    // Which skill documents will actually reach the model for this author.
+    // Active only, matching what the prompt builder reads.
+    fetchAuthorSkills({ authorId: fields.authorId, status: 'active' })
+      .then(setAuthorSkills)
+      .catch(() => setAuthorSkills(null));
   }, [fields.authorId]);
 
   // Same for the product summary used on the review screen.
@@ -157,6 +233,9 @@ export function NewArticle() {
       articleTypeId: fields.articleTypeId,
       authorId: fields.authorId,
       productId: fields.productId,
+      projectId: fields.projectId,
+      themeId: fields.themeId,
+      topicId: fields.topicId,
       topic: fields.topic,
       title: fields.title,
       targetAudience: fields.targetAudience,
@@ -247,8 +326,39 @@ export function NewArticle() {
 
             {step === 2 && (
               <>
-                <h2>2. Author</h2>
-                <AuthorPicker selectedAuthorId={fields.authorId} onSelect={(authorId) => updateField('authorId', authorId)} />
+                <h2>2. Thematic Area &amp; Author</h2>
+                <label className="wizard-field">
+                  Thematic Area
+                  <select
+                    value={fields.themeId ?? ''}
+                    onChange={(e) => {
+                      const themeId = e.target.value ? Number(e.target.value) : null;
+                      // Changing the area invalidates a topic chosen under the
+                      // previous one, so clear it rather than send a mismatch.
+                      // The author is cleared for the same reason: the new
+                      // area has its own, and the effect above selects it.
+                      setFields((current) => ({ ...current, themeId, topicId: null, authorId: null }));
+                    }}
+                  >
+                    <option value="">No thematic area</option>
+                    {themes.map((theme) => (
+                      <option key={theme.id} value={theme.id}>
+                        {theme.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {themes.length === 0 && (
+                  <p className="wizard-hint">
+                    No thematic areas configured yet. <Link to="/content/themes">Add one</Link> to group topics and
+                    authors.
+                  </p>
+                )}
+                <AuthorPicker
+                  selectedAuthorId={fields.authorId}
+                  onSelect={(authorId) => updateField('authorId', authorId)}
+                  allowedAuthorIds={themeAuthorIds}
+                />
                 {authorDetail && (
                   <dl className="author-detail-readonly">
                     <div>
@@ -267,6 +377,16 @@ export function NewArticle() {
                       <dt>Writing Style</dt>
                       <dd>{authorDetail.writingStyle || '—'}</dd>
                     </div>
+                    <div>
+                      <dt>Author Skill</dt>
+                      <dd>
+                        {authorSkills === null
+                          ? '—'
+                          : authorSkills.length === 0
+                            ? 'None — this author writes from the fields above alone.'
+                            : authorSkills.map((skill) => skill.name).join(', ')}
+                      </dd>
+                    </div>
                   </dl>
                 )}
               </>
@@ -275,6 +395,43 @@ export function NewArticle() {
             {step === 3 && (
               <>
                 <h2>3. Topic</h2>
+                {fields.themeId === null ? (
+                  <p className="wizard-hint">
+                    Pick a thematic area on the previous step to choose from its topics, or type a subject below.
+                  </p>
+                ) : themeTopics.length === 0 ? (
+                  <p className="wizard-hint">
+                    This thematic area has no topics yet.{' '}
+                    <Link to={`/content/themes/${fields.themeId}`}>Add one</Link> to carry editorial guidance into
+                    generation, or type a subject below.
+                  </p>
+                ) : (
+                  <label className="wizard-field">
+                    Topic
+                    <select
+                      value={fields.topicId ?? ''}
+                      onChange={(e) => {
+                        const topicId = e.target.value ? Number(e.target.value) : null;
+                        const chosen = themeTopics.find((t) => t.id === topicId);
+                        // Mirror the chosen topic into the free-text field so
+                        // the prompt still reads naturally and older drafts
+                        // keep working.
+                        setFields((current) => ({
+                          ...current,
+                          topicId,
+                          topic: chosen ? chosen.title : current.topic,
+                        }));
+                      }}
+                    >
+                      <option value="">No topic selected</option>
+                      {themeTopics.map((topic) => (
+                        <option key={topic.id} value={topic.id}>
+                          {topic.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <label className="wizard-field">
                   Main Topic <span aria-hidden="true">*</span>
                   <input value={fields.topic} onChange={(e) => updateField('topic', e.target.value)} required />
@@ -315,11 +472,22 @@ export function NewArticle() {
 
             {step === 6 && (
               <>
-                <h2>6. Product</h2>
-                <ProductPicker
-                  selectedProductId={fields.productId}
-                  onSelect={(productId) => updateField('productId', productId)}
-                />
+                <h2>6. Products</h2>
+                {/*
+                  An article can carry several products (Milestone 17). The
+                  single-product picker below is kept for drafts created before
+                  that, and is hidden once anything is attached the new way.
+                */}
+                <ArticleProductsPanel articleId={draftId} />
+                {draftId !== null && fields.productId !== null && (
+                  <details className="wizard-legacy-product">
+                    <summary>This draft also has a single product from the earlier workflow</summary>
+                    <ProductPicker
+                      selectedProductId={fields.productId}
+                      onSelect={(productId) => updateField('productId', productId)}
+                    />
+                  </details>
+                )}
               </>
             )}
 

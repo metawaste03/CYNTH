@@ -17,6 +17,11 @@
   --color-accent-soft: rgba(52, 84, 209, 0.1);
   --color-accent-contrast: #ffffff;
   --color-danger: #c0392b;
+  /* "Waiting for you", and "read this before you continue". Paired light and
+     dark like every other colour here, so a component never has to invent one
+     and never falls back to a light value on a dark ground. */
+  --color-warning: #8a6216;
+  --color-warning-soft: rgba(184, 121, 27, 0.14);
 
   --shadow-sm: 0 1px 2px rgba(15, 15, 20, 0.06);
   --shadow-md: 0 8px 24px rgba(15, 15, 20, 0.08);
@@ -55,6 +60,8 @@
     --color-accent: #7b93f0;
     --color-accent-soft: rgba(123, 147, 240, 0.16);
     --color-accent-contrast: #10121a;
+    --color-warning: #e0b25f;
+    --color-warning-soft: rgba(224, 178, 95, 0.16);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
   }

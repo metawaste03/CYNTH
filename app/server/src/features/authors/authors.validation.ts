@@ -20,6 +20,10 @@ export interface AuthorInput {
   preferredExpressions?: string;
   prohibitedExpressions?: string;
   writingNotes?: string;
+  expertise?: string;
+  perspective?: string;
+  editorialPrinciples?: string;
+  boundaries?: string;
   isActive?: boolean;
   writingSamples?: WritingSampleInput[];
 }
@@ -39,6 +43,10 @@ const OPTIONAL_STRING_FIELDS = [
   'preferredExpressions',
   'prohibitedExpressions',
   'writingNotes',
+  'expertise',
+  'perspective',
+  'editorialPrinciples',
+  'boundaries',
 ] as const;
 
 export function validateAuthorInput(body: unknown): ValidationResult<AuthorInput> {

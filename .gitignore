@@ -35,3 +35,18 @@ lerna-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# Ad-hoc credential notes that get parked in the project folder.
+# Cynth's own provider keys belong in app/server/.env.local (ignored above),
+# never in a loose text file inside the repository.
+*API Key*.txt
+*API Keys*.txt
+*api-key*.txt
+*api-keys*.txt
+
+# Runtime data, not source. Images people upload through the app and the
+# server's own logs live beside the database and are restored from backup,
+# not from git.
+database/uploads/
+database/*.log
+database/*.log.err
