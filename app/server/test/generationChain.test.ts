@@ -16,6 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-chain-test-${process.pid}`);
@@ -50,7 +51,7 @@ let reply = '{}';
 /** Every prompt actually sent, so a test can assert on what the model was told. */
 const prompts: string[] = [];
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+globalThis.fetch = withEmbeddings((async (_input: unknown, init?: RequestInit) => {
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   prompts.push(String(body?.messages?.[0]?.content ?? ''));
 
@@ -61,7 +62,7 @@ globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
     }),
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
-}) as typeof fetch;
+}) as typeof fetch);
 
 secrets.setSecret('CYNTH_CHAIN_KEY', 'not-a-real-credential');
 const db = dbModule.getDatabase();

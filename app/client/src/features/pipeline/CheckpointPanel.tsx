@@ -101,6 +101,12 @@ function TopicChoice({ options, busy, onDecide }: { options: TopicOptions; busy:
             </dl>
 
             <p className="checkpoint-option__summary">{candidate.researchSummary}</p>
+            {candidate.coverage && (
+              <p className={candidate.coverage.verdict === 'neighbour' ? 'checkpoint-warning' : 'pipeline-muted'}>
+                {candidate.coverage.subtopic ? `Subtopic: ${candidate.coverage.subtopic}. ` : ''}
+                {candidate.coverage.note}
+              </p>
+            )}
             <p className="pipeline-muted">
               {candidate.sourceCount === 0
                 ? 'No sources were captured for this one.'
@@ -109,6 +115,28 @@ function TopicChoice({ options, busy, onDecide }: { options: TopicOptions; busy:
           </li>
         ))}
       </ul>
+
+      {/* Why the list may be shorter than Cynth researched: the coverage
+          gate removed topics already written, and held ones that widen the
+          area into a subtopic waiting for approval on the Coverage page. */}
+      {options.notOffered && options.notOffered.length > 0 && (
+        <div className="checkpoint-not-offered">
+          <p className="pipeline-muted">Not offered:</p>
+          <ul>
+            {options.notOffered.map((entry) => (
+              <li key={entry.topic}>
+                <strong>{entry.topic}</strong> — {entry.reason}
+                {entry.outcome === 'held' && (
+                  <>
+                    {' '}
+                    <Link to="/coverage">Review on Coverage</Link>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <label className="checkpoint-custom">
         <input type="checkbox" checked={useCustom} onChange={(e) => setUseCustom(e.target.checked)} />
@@ -127,7 +155,8 @@ function TopicChoice({ options, busy, onDecide }: { options: TopicOptions; busy:
               that was done for a different subject. */}
           <p className="checkpoint-warning">
             Cynth has not researched this topic. It will be written without the search, gap and timing findings above,
-            and without sources.
+            and without sources. It is still checked against everything already written, and stopped if it repeats an
+            existing article.
           </p>
         </>
       )}

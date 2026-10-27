@@ -16,6 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-stages-test-${process.pid}`);
@@ -53,7 +54,7 @@ let status = 200;
 const calls: string[] = [];
 const realFetch = globalThis.fetch;
 
-globalThis.fetch = (async (input: string | URL | Request) => {
+globalThis.fetch = withEmbeddings((async (input: string | URL | Request) => {
   calls.push(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
   return new Response(
     JSON.stringify({
@@ -62,7 +63,7 @@ globalThis.fetch = (async (input: string | URL | Request) => {
     }),
     { status, headers: { 'content-type': 'application/json' } },
   );
-}) as typeof fetch;
+}) as typeof fetch);
 
 secrets.setSecret('CYNTH_STAGES_TEST_KEY', 'not-a-real-credential');
 const db = dbModule.getDatabase();

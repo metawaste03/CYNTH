@@ -1,12 +1,12 @@
 import { runStage } from '../stageRunner.service.js';
 import type { StageResult } from '../stageRunner.service.js';
-import { getPipelineById, setState } from '../pipeline.repository.js';
+import { findCompletedStage, getPipelineById, setState } from '../pipeline.repository.js';
 import { ARTICLE_TYPE_SLUGS, STAGE_DEFINITIONS } from '../pipeline.constants.js';
 import type { TopicMode } from '../pipeline.constants.js';
 import { isSpendRefusal } from '../../generation/generation.errors.js';
 import { getThemeById, getProjectById } from '../../content/content.repository.js';
 import { getArticleById } from '../../articles/articles.repository.js';
-import { buildCoverageBlock } from '../../articles/coverage.service.js';
+import { buildGraphBlock, buildSectionMapBlock, syncCoverageGraph } from '../../coverage-graph/coverageGraph.service.js';
 import { buildBalanceBlock } from '../../articles/areaBalance.service.js';
 
 /**
@@ -105,8 +105,13 @@ function themeContext(pipelineId: number): {
     // sub-subject, one product category or one species" — but it could only
     // infer that from a list of titles, and the skew it was meant to catch
     // lived in the product library, which it cannot see at all.
+    // THE COVERAGE GRAPH replaced the title list here. Titles said what each
+    // article is called; the graph says what each one already explains,
+    // section by section, and which parts of the area's own scope have never
+    // been reached. See coverage-graph/coverageGraph.service.ts.
     coverage:
-      buildCoverageBlock(pipeline?.themeId ?? null, pipeline?.articleId) + buildBalanceBlock(theme?.name ?? null),
+      buildGraphBlock(pipeline?.themeId ?? null, theme?.name ?? null, pipeline?.articleId) +
+      buildBalanceBlock(theme?.name ?? null),
   };
 }
 
@@ -125,6 +130,14 @@ export interface TopicResearch {
   recommendedAngle: string;
   competingContentObservations: string[];
   researchSources: { url: string; title: string; note: string }[];
+  /**
+   * The area subtopic this topic serves, exactly as the scope list names it,
+   * or "NEW: <name>" for one outside the scope. Absent on runs researched
+   * before the coverage graph existed, and on a topic the editor typed.
+   */
+  subtopic?: string;
+  /** For a NEW subtopic: which part of the area's core idea it serves. */
+  coreIdeaServed?: string;
 }
 
 /**
@@ -202,7 +215,9 @@ function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, 
     '  "likely_search_intent": "informational | commercial | transactional | navigational, with a short reason",',
     '  "recommended_angle": "the specific angle you would take",',
     '  "competing_content_observations": ["what the existing coverage looks like"],',
-    '  "research_sources": [{"url": "", "title": "", "note": "why it mattered"}]',
+    '  "research_sources": [{"url": "", "title": "", "note": "why it mattered"}],',
+    '  "subtopic": "the subtopic this serves, exactly as named in the scope list, or NEW: <name>",',
+    '  "core_idea_served": "only for a NEW subtopic: which part of the core idea it serves, in one sentence"',
     '    }',
     '  ]',
     '}',
@@ -238,6 +253,8 @@ function readTopicCandidate(json: Record<string, unknown>): TopicResearch {
           }))
           .slice(0, 20)
       : [],
+    subtopic: str(json, 'subtopic', { max: 200 }) || undefined,
+    coreIdeaServed: str(json, 'core_idea_served', { max: 600 }) || undefined,
   };
 }
 
@@ -291,6 +308,15 @@ export async function runTopicResearch(
   setState(pipelineId, definition.runningState, { stage: 'topic_research' });
 
   try {
+    // THE GRAPH IS BROUGHT UP TO DATE BEFORE THE PROMPT IS BUILT, so the
+    // catalogue topic research reads includes everything written since the
+    // last run. Only changed articles are embedded; with nothing new this
+    // makes no call at all. Skipped when the stage will be reused anyway.
+    const pipelineNow = getPipelineById(pipelineId);
+    if (options.rerun || !pipelineNow || !findCompletedStage(pipelineNow.id, pipelineNow.version, 'topic_research')) {
+      await syncCoverageGraph();
+    }
+
     const result = await runStage({
       pipelineId,
       stage: 'topic_research',
@@ -340,11 +366,18 @@ export interface KeywordResearch {
   titleCandidates: string[];
   recommendedTitle: string;
   recommendedHeadings: string[];
+  /**
+   * The planned sections with what each will say. The section gate compares
+   * these against every point already written; a heading alone carries too
+   * little meaning to compare (planned headings scored at most 0.70 against
+   * their own duplicates in calibration). Empty on runs from before it existed.
+   */
+  recommendedSections: { heading: string; covers: string }[];
   seoNotes: string[];
   sources: string[];
 }
 
-function buildKeywordPrompt(research: TopicResearch): string {
+function buildKeywordPrompt(research: TopicResearch, sectionMap = ''): string {
   return [
     'You are an SEO analyst. You are given completed topic research and must turn it into a keyword and title plan.',
     '',
@@ -364,6 +397,9 @@ function buildKeywordPrompt(research: TopicResearch): string {
     `Likely search intent: ${research.likelySearchIntent}`,
     `Research summary: ${research.researchSummary}`,
     '',
+    // What is already written, so the plan does not include a section the
+    // section gate would only cut again.
+    sectionMap,
     '=== OUTPUT ===',
     'Reply with JSON only. No commentary, no code fence.',
     '{',
@@ -378,6 +414,7 @@ function buildKeywordPrompt(research: TopicResearch): string {
     '  "title_candidates": ["four to six options"],',
     '  "recommended_title": "",',
     '  "recommended_headings": ["the H2s you would use"],',
+    '  "recommended_sections": [{"heading": "the same H2", "covers": "one sentence: what this section will say"}],',
     '  "seo_notes": ["anything the writer should know"],',
     '  "sources": []',
     '}',
@@ -399,6 +436,16 @@ function parseKeywordResearch(text: string): KeywordResearch {
     titleCandidates: strList(json, 'title_candidates', 10),
     recommendedTitle: str(json, 'recommended_title', { required: true, max: 300 }),
     recommendedHeadings: strList(json, 'recommended_headings', 20),
+    recommendedSections: Array.isArray(json.recommended_sections)
+      ? (json.recommended_sections as unknown[])
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+          .map((entry) => ({
+            heading: typeof entry.heading === 'string' ? entry.heading.trim().slice(0, 300) : '',
+            covers: typeof entry.covers === 'string' ? entry.covers.trim().slice(0, 600) : '',
+          }))
+          .filter((entry) => entry.heading)
+          .slice(0, 20)
+      : [],
     seoNotes: strList(json, 'seo_notes'),
     sources: strList(json, 'sources'),
   };
@@ -419,7 +466,13 @@ export async function runKeywordResearch(
     const result = await runStage({
       pipelineId,
       stage: 'keyword_research',
-      prompt: buildKeywordPrompt(research),
+      prompt: buildKeywordPrompt(
+        research,
+        (() => {
+          const pipeline = getPipelineById(pipelineId);
+          return buildSectionMapBlock(pipeline?.themeId ?? null, pipeline?.articleId);
+        })(),
+      ),
       parse: parseKeywordResearch,
       timeoutMs: SEO_TIMEOUT_MS,
       assumedCompletionTokens: 1200,

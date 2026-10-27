@@ -19,6 +19,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 /* ------------------------------------------------------------------ setup */
@@ -55,12 +56,12 @@ let respondWith: (url: string) => { status: number; body: unknown } = () => ({
 const callLog: string[] = [];
 
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: string | URL | Request) => {
+globalThis.fetch = withEmbeddings((async (input: string | URL | Request) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   callLog.push(url);
   const { status, body } = respondWith(url);
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
-}) as typeof fetch;
+}) as typeof fetch);
 
 /* --------------------------------------------------------- test fixtures */
 

@@ -17,6 +17,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-orch-test-${process.pid}`);
@@ -51,7 +52,7 @@ let callCount = 0;
 const replies: string[] = [];
 
 const realFetch = globalThis.fetch;
-globalThis.fetch = (async () => {
+globalThis.fetch = withEmbeddings((async () => {
   const body = replies[callCount] ?? '{}';
   callCount += 1;
   return new Response(
@@ -61,7 +62,7 @@ globalThis.fetch = (async () => {
     }),
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
-}) as typeof fetch;
+}) as typeof fetch);
 
 secrets.setSecret('CYNTH_ORCH_KEY', 'not-a-real-credential');
 const db = dbModule.getDatabase();
@@ -160,6 +161,11 @@ function stage(...bodies: string[]) {
   replies.length = 0;
   callCount = 0;
   replies.push(...bodies);
+  // Every test here writes the same staged article. Left in place, the
+  // previous test's copy would make this one a duplicate, and the coverage
+  // gate would rightly stop it — which is coverageGraph.test.ts's subject,
+  // not this file's. Each run starts from an empty catalogue.
+  dbModule.getDatabase().prepare('UPDATE articles SET content = NULL').run();
 }
 
 /* ------------------------------------------------------------ the test --- */

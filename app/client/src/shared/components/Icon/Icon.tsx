@@ -13,6 +13,7 @@ export type IconName =
   | 'products'
   | 'seoReview'
   | 'qualityGate'
+  | 'coverage'
   | 'settings'
   | 'system'
   | 'site'
@@ -81,6 +82,16 @@ export function Icon({ name, ...rest }: IconProps) {
         <svg {...shared} {...rest} aria-hidden="true">
           <path d="M12 3.5 19 6v5.5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" />
           <path d="m9 12 2 2 4-4.5" />
+        </svg>
+      );
+    case 'coverage':
+      // Linked nodes: the coverage graph.
+      return (
+        <svg {...shared} {...rest} aria-hidden="true">
+          <circle cx="6" cy="7" r="2.25" />
+          <circle cx="18" cy="6" r="2.25" />
+          <circle cx="12" cy="17.5" r="2.25" />
+          <path d="M8.1 7.9 10.6 15.6M15.9 7.2 13.4 15.6M8.2 6.8l7.6-.6" />
         </svg>
       );
     case 'settings':

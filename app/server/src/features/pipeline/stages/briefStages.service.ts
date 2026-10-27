@@ -8,6 +8,7 @@ import { getArticleById } from '../../articles/articles.repository.js';
 import { getAuthorById } from '../../authors/authors.repository.js';
 import { listActiveSharedSkills, listActiveSkillsForAuthor } from '../../authors/authorSkills.repository.js';
 import { getThemeById, getProjectById } from '../../content/content.repository.js';
+import type { BriefCoverage } from './coverageStages.service.js';
 import type { ArticleClassification, KeywordResearch, TopicResearch } from './researchStages.service.js';
 
 /**
@@ -143,6 +144,13 @@ export interface ArticleBrief {
   affiliateOpportunities: string;
   template: TemplateSelection;
   editorialRules: string;
+  /**
+   * What the section gate found already written on the site: the sections it
+   * removed from the plan and where each is covered, plus the article this one
+   * must not become. Absent when nothing was found, and on briefs built before
+   * the coverage graph existed.
+   */
+  coverage?: BriefCoverage | null;
 }
 
 /**
@@ -158,6 +166,7 @@ export function buildBrief(
   keywords: KeywordResearch,
   classification: ArticleClassification,
   template: TemplateSelection,
+  coverage: BriefCoverage | null = null,
 ): { run: StageRunDto; output: ArticleBrief; reused: boolean } {
   const pipeline = getPipelineById(pipelineId);
   if (!pipeline) throw new Error('Pipeline not found.');
@@ -201,13 +210,18 @@ export function buildBrief(
     recommendedAngle: research.recommendedAngle,
     contentGap: research.contentGap,
     title: keywords.recommendedTitle,
-    recommendedHeadings: keywords.recommendedHeadings,
+    // A heading the section gate cut is not offered to the writer at all.
+    recommendedHeadings: keywords.recommendedHeadings.filter(
+      (heading) =>
+        !coverage?.alreadyCovered.some((entry) => entry.heading.trim().toLowerCase() === heading.trim().toLowerCase()),
+    ),
     evidenceRequirements: research.researchSources.length
       ? 'Attribute claims to the sources identified during research where they are used.'
       : 'No sources were captured during research. Do not manufacture citations — write what can be supported without them, and say where certainty is limited.',
     affiliateOpportunities: research.commercialOpportunity,
     template,
     editorialRules: project?.editorialGuidance ?? '',
+    coverage,
   };
 
   const completed = completeStageRun(run.id, { output });

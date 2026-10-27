@@ -24,6 +24,8 @@ import { refreshArticleSlug } from '../../articles/articles.repository.js';
 import type { SectionSchema } from '../../templates/templates.definitions.js';
 import { buildGenerationContext } from '../../generation/generationContext.service.js';
 import { GenerationError, isSpendRefusal } from '../../generation/generation.errors.js';
+import { coverageIssuesFor, describeBriefCoverage, describeDraftOverlaps } from './coverageStages.service.js';
+import type { DraftOverlap } from '../../coverage-graph/coverageGraph.service.js';
 import type { ArticleBrief } from './briefStages.service.js';
 
 /**
@@ -284,6 +286,9 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     `Evidence: ${brief.evidenceRequirements}`,
     brief.editorialRules ? `Publication rules: ${brief.editorialRules}` : '',
     '',
+    // What the section gate found already written. After the brief so it is
+    // read as a constraint on the plan above, before the template is laid out.
+    describeBriefCoverage(brief.coverage),
     `=== TEMPLATE: ${template.name} (${template.templateId} v${template.version}) ===`,
     // A band rather than a floor. Given only a minimum, a model has exactly
     // one direction to push in, and every article came out long.
@@ -548,6 +553,8 @@ function buildReviewerPrompt(
   hasProducts: boolean,
   /** The same documents the writer was given, so "author voice" is judged against something. */
   voice: string,
+  /** Sections the draft gate measured as repeating existing articles. */
+  overlaps: DraftOverlap[] = [],
 ): string {
   return [
     'You are an independent editor reviewing a finished draft. You do NOT rewrite it. You produce a structured assessment and, where changes are needed, a precise specification of them.',
@@ -585,6 +592,7 @@ function buildReviewerPrompt(
       ? `${voice}\nAssess the draft against these documents specifically: whether it actually sounds like this author, or merely like competent prose.`
       : '',
     '',
+    describeDraftOverlaps(overlaps),
     '=== THE DRAFT ===',
     `Title: ${article.title}`,
     ...article.sections.map((section) => `\n--- ${section.key} (${section.heading}) ---\n${section.body}`),
@@ -606,6 +614,12 @@ function buildReviewerPrompt(
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+function withCoverageIssues(review: ArticleReview, overlaps: DraftOverlap[]): ArticleReview {
+  if (!overlaps.length) return review;
+  const issues = [...coverageIssuesFor(overlaps), ...review.issues];
+  return { ...review, issues, revisionRequired: true };
 }
 
 function parseReview(text: string): ArticleReview {
@@ -658,10 +672,11 @@ export async function runArticleReview(
   pipelineId: number,
   brief: ArticleBrief,
   article: GeneratedArticle,
-  options: { confirmedCost?: boolean; rerun?: boolean } = {},
+  options: { confirmedCost?: boolean; rerun?: boolean; overlaps?: DraftOverlap[] } = {},
 ): Promise<StageResult> {
   const pipeline = getPipelineById(pipelineId);
   if (!pipeline) throw new GenerationError('invalid_configuration', 'Pipeline not found.');
+  const overlaps = options.overlaps ?? [];
 
   // IDEMPOTENCE FIRST. Returning the review that already happened is not a
   // second review, and the cap must not mistake it for one — otherwise
@@ -689,8 +704,10 @@ export async function runArticleReview(
     const result = await runStage({
       pipelineId,
       stage: 'article_review',
-      prompt: buildReviewerPrompt(brief, article, (context?.products.length ?? 0) > 0, buildVoiceBlock(context)),
-      parse: parseReview,
+      prompt: buildReviewerPrompt(brief, article, (context?.products.length ?? 0) > 0, buildVoiceBlock(context), overlaps),
+      // A measured repeat is not the reviewer's to waive. Each one is added to
+      // the review as a major issue, which also makes the revision required.
+      parse: (text: string) => withCoverageIssues(parseReview(text), overlaps),
       timeoutMs: REVIEW_TIMEOUT_MS,
       assumedCompletionTokens: 2000,
       confirmedCost: options.confirmedCost,

@@ -1194,4 +1194,86 @@ CREATE TABLE IF NOT EXISTS article_quality_gate (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- ---------------------------------------------------------------------------
+-- COVERAGE GRAPH.
+--
+-- A memory of everything the publication has written, at the level of the
+-- points each article makes rather than its title. It exists so a new article
+-- can be stopped BEFORE it is written when it would repeat one that exists,
+-- and so each thematic area can widen into subtopics it has not reached
+-- without drifting from its core idea.
+--
+-- Nodes: areas (themes), subtopics, articles, points. Edges: area→subtopic,
+-- article→subtopic, article→point, point→similar point. Every vector records
+-- the embedding model that made it; vectors from different models are never
+-- compared.
+CREATE TABLE IF NOT EXISTS coverage_articles (
+  article_id INTEGER PRIMARY KEY REFERENCES articles(id) ON DELETE CASCADE,
+  theme_id INTEGER,
+  title TEXT NOT NULL,
+  -- So an unchanged article is not embedded again.
+  content_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  -- Title plus introduction: what the article is about, compared at the topic gate.
+  topic_vector BLOB NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  reported_cost REAL,
+  indexed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS coverage_points (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_id INTEGER NOT NULL REFERENCES coverage_articles(article_id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL,
+  heading TEXT NOT NULL,
+  parent_heading TEXT,
+  -- The opening of the section, so a match can be shown to a person.
+  excerpt TEXT NOT NULL,
+  word_count INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  vector BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_coverage_points_article ON coverage_points(article_id);
+
+-- Two points in different articles that say much the same thing. Recomputed
+-- whenever either article is re-indexed.
+CREATE TABLE IF NOT EXISTS coverage_point_links (
+  point_id INTEGER NOT NULL REFERENCES coverage_points(id) ON DELETE CASCADE,
+  other_point_id INTEGER NOT NULL REFERENCES coverage_points(id) ON DELETE CASCADE,
+  score REAL NOT NULL,
+  PRIMARY KEY (point_id, other_point_id)
+);
+
+-- 'core' comes from the area's brief, 'adjacent' is the ring around it,
+-- 'proposed' was suggested by topic research and waits for a person, and
+-- 'rejected' was declined and is never proposed again.
+CREATE TABLE IF NOT EXISTS coverage_subtopics (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  theme_id INTEGER NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  ring TEXT NOT NULL,
+  -- For a proposed subtopic: which of the area's core ideas it claims to serve.
+  core_idea TEXT,
+  proposed_by_pipeline_id INTEGER,
+  model TEXT,
+  vector BLOB,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT,
+  UNIQUE (theme_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS coverage_article_subtopics (
+  article_id INTEGER NOT NULL REFERENCES coverage_articles(article_id) ON DELETE CASCADE,
+  subtopic_id INTEGER NOT NULL REFERENCES coverage_subtopics(id) ON DELETE CASCADE,
+  -- How many of the article's points sit closest to this subtopic.
+  points INTEGER NOT NULL,
+  -- The best single point-to-subtopic similarity.
+  score REAL NOT NULL,
+  -- 1 when this is the subtopic the article as a whole is about (its title and
+  -- introduction sit closest to it); 0 when its sections only touch it.
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (article_id, subtopic_id)
+);
 `;

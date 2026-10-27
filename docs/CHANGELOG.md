@@ -2,6 +2,26 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.57.0] - 2026-10-27
+
+### Added
+
+- **The coverage graph: an article that repeats one already written is never drafted.** Topic research used to see titles only, so a new article could choose a fresh subject and still re-explain what three others already explain. Caffeine timing was explained in three articles across two areas, and the budget-workspace piece repeats the wrist, chair and screen-height articles section for section. Cynth now holds every article as the points it makes: each section and each FAQ answer is embedded (OpenRouter, `openai/text-embedding-3-small`), and points that say the same thing are linked. Three new stages read it:
+  - **Coverage Check: Topics** (after topic research). A proposed topic at or above 0.65 similarity to any existing article, in any area, is dropped before anyone can choose it. A topic between 0.57 and 0.65 goes ahead only as a different question, carrying the comparison into the brief. If nothing survives, the run stops in Needs Editorial Attention and nothing is written.
+  - **Coverage Check: Sections** (after classification, before drafting). Keyword research now plans sections with a sentence on what each covers. A planned section at or above 0.62 to an existing section is cut, and the writer is told to give that point in one sentence and link to it. If more than 40% of the plan is cut, the run stops. The chosen topic is checked again here, so a topic the editor typed is not exempt.
+  - **Coverage Check: Draft** (after drafting). A written section at or above 0.76 is added to the review as a major issue that cannot be waived, so the one revision fixes it. Final validation checks the finished article again, and a surviving repeat blocks it.
+- **Each area's scope is now a measured map.** Every brief's "in scope" list is written out as core subtopics plus an adjacent ring, all tied to one core idea per area (`coverage-graph/coverageScope.ts`). Topic research is told which core subtopics have never been written about, and is steered to them first, then to the ring. A topic in a subtopic outside both is **held**, the subtopic is recorded as proposed, and nothing is written about it until it is approved. A rejected subtopic is never proposed again.
+- **Coverage page** (`/coverage`). Shows each area's subtopics (covered, touched by a section, or not written about), proposed subtopics with Approve and Reject, the strongest repeats already in the catalogue, and the five thresholds.
+- **The topic choice explains a short list.** Topics the gate did not offer are listed with the reason, and each offered topic shows the subtopic it serves.
+- `npm run coverage` syncs the graph and prints every area's map; `scripts/coverage-calibrate.ts` and `scripts/coverage-probe.ts` re-measure the thresholds.
+
+### Changed
+
+- The gates **fail closed**. If embedding is unavailable, the stage fails (the run can be resumed) rather than passing unchecked.
+- Embedding cost is recorded on each gate's stage run. Indexing the 25 live articles cost $0.0013; a full article's checks cost well under a hundredth of a cent, so the gates are not behind the spend confirmation.
+
+**Verified**: thresholds measured on the live catalogue. Reworded duplicates of existing articles scored 0.67–0.80 and new in-scope topics 0.42–0.50; duplicated planned sections scored 0.63–0.84 and new ones 0.38–0.58. 10 new tests; 7 pipeline test files now answer embedding requests with a deterministic stand-in. **574 tests pass.**
+
 ## [0.56.0] - 2026-10-08
 
 ### Fixed

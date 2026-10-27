@@ -13,5 +13,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'media', label: 'Media Library', path: '/media', icon: 'media' },
   { id: 'seo-review', label: 'SEO Review', path: '/seo-review', icon: 'seoReview' },
   { id: 'quality-gate', label: 'Quality Gate', path: '/quality-gate', icon: 'qualityGate' },
+  { id: 'coverage', label: 'Coverage', path: '/coverage', icon: 'coverage' },
   { id: 'settings', label: 'Settings', path: '/settings', icon: 'settings' },
 ];

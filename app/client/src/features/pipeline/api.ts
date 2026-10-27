@@ -19,11 +19,15 @@ export interface TopicOption {
   likelySearchIntent: string;
   researchSummary: string;
   sourceCount: number;
+  /** What the coverage gate found. Null on runs from before it existed. */
+  coverage?: { subtopic: string | null; ring: string | null; verdict: string; note: string } | null;
 }
 
 export interface TopicOptions {
   candidates: TopicOption[];
   recommendedIndex: number;
+  /** Topics the coverage gate did not offer, and why. */
+  notOffered?: { topic: string; outcome: 'dropped' | 'held'; reason: string }[];
 }
 
 export interface KeywordOptions {

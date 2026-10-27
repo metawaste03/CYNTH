@@ -41,7 +41,12 @@ import type {
 } from './stages/researchStages.service.js';
 import { buildBrief, overrideArticleType, selectTemplate } from './stages/briefStages.service.js';
 import type { ArticleBrief, TemplateSelection } from './stages/briefStages.service.js';
-import { runArticleGeneration, runArticleReview, runArticleRevision } from './stages/generationStages.service.js';
+import {
+  renderArticleMarkdown,
+  runArticleGeneration,
+  runArticleReview,
+  runArticleRevision,
+} from './stages/generationStages.service.js';
 import type { ArticleReview, GeneratedArticle } from './stages/generationStages.service.js';
 import { runFinalValidation } from './stages/validation.service.js';
 import { runProductOpportunity } from './stages/productOpportunity.service.js';
@@ -72,6 +77,15 @@ import { attachProduct, detachProduct, listArticleProducts } from '../articles/a
 import { listProducts } from '../products/products.repository.js';
 import { getTemplate } from '../templates/templates.repository.js';
 import { getDefaultProject, getThemeById, listAuthorsForTheme } from '../content/content.repository.js';
+import {
+  briefCoverageFrom,
+  finalCoverageFindings,
+  runDraftScreen,
+  runSectionScreen,
+  runTopicScreen,
+} from './stages/coverageStages.service.js';
+import type { TopicScreenOutput } from './stages/coverageStages.service.js';
+import type { ValidationFinding } from './stages/validation.service.js';
 import { GenerationError } from '../generation/generation.errors.js';
 
 /**
@@ -154,6 +168,21 @@ function outputOf<T>(pipeline: PipelineDto, stage: PipelineStage): T | null {
  * to "how many should I choose" and the reason a trend analysis is not asked
  * the question at all.
  */
+/**
+ * The shortlist a topic decision refers to: the one the coverage gate let
+ * through. A decision's index points into THIS list, so reading the raw
+ * research instead would select a different topic from the one chosen.
+ * Runs from before the gate existed have no screen and use the research.
+ */
+function shortlistOf(pipeline: PipelineDto): TopicResearchSet | null {
+  const screen = outputOf<TopicScreenOutput>(pipeline, 'topic_screen');
+  // A screen that let nothing through is an empty shortlist, NOT a reason to
+  // fall back to the unscreened research — that would offer the very topics
+  // the gate stopped.
+  if (screen) return screen.screened;
+  return outputOf<TopicResearchSet>(pipeline, 'topic_research');
+}
+
 function productSlotsFor(templateId: string | null, version: number | null): number {
   if (!templateId) return 0;
   const template = getTemplate(templateId, version ?? undefined);
@@ -250,9 +279,12 @@ function describeCheckpoint(pipeline: PipelineDto, checkpoint: CheckpointDto): O
   let options: unknown = null;
   switch (checkpoint.kind) {
     case 'topic': {
-      const output = outputOf<TopicResearchSet>(pipeline, 'topic_research');
+      // The SCREENED shortlist: the editor chooses only among topics the
+      // coverage gate let through, and sees why the others were not offered.
+      const screen = outputOf<TopicScreenOutput>(pipeline, 'topic_screen');
+      const output = shortlistOf(pipeline);
       if (!output) return null;
-      options = buildTopicOptions(output);
+      options = buildTopicOptions(output, screen?.results ?? []);
       break;
     }
     case 'keywords_title': {
@@ -498,7 +530,31 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
       .output as TopicResearchSet;
     if (shouldStop('topic_research')) return getPipelineStatus(pipelineId)!;
 
-    const chosenTopic = applyTopicDecision(topicSet, decisionFor<TopicDecision>('topic'));
+    /* ---- coverage gate 1: topics -------------------------------------------
+     * Before anyone chooses. A topic too close to an existing article is
+     * dropped, and one that widens the area into an unapproved subtopic is
+     * held; neither is offered. When nothing survives, the run stops here.
+     */
+    // NOT for a run whose topic was already used before this gate existed.
+    // Its keywords were written for a topic chosen from the unscreened list,
+    // and a recorded choice is a position in THAT list: screening now would
+    // shorten the list underneath it and silently select a different topic.
+    // Such a run still passes the section and draft gates, which re-check
+    // the chosen topic and everything written after it.
+    const current = getPipelineById(pipelineId)!;
+    const topicAlreadyUsed =
+      !findCompletedStage(current.id, current.version, 'topic_screen') &&
+      Boolean(findCompletedStage(current.id, current.version, 'keyword_research'));
+
+    let shortlist: TopicResearchSet = topicSet;
+    if (!topicAlreadyUsed) {
+      const topicScreen = (await runTopicScreen(pipelineId, topicSet)).output;
+      if (!topicScreen.screened) return getPipelineStatus(pipelineId)!;
+      shortlist = topicScreen.screened;
+    }
+    if (shouldStop('topic_screen')) return getPipelineStatus(pipelineId)!;
+
+    const chosenTopic = applyTopicDecision(shortlist, decisionFor<TopicDecision>('topic'));
     if (isDecisionError(chosenTopic)) {
       throw new GenerationError('invalid_configuration', chosenTopic.error);
     }
@@ -513,6 +569,16 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
     const classification = (await runClassification(pipelineId, research, keywords, { confirmedCost }))
       .output as ArticleClassification;
     if (shouldStop('article_classification')) return getPipelineStatus(pipelineId)!;
+
+    /* ---- coverage gate 2: sections -----------------------------------------
+     * The plan is final here: topic chosen, headings chosen. Each planned
+     * section is compared with everything already written; a repeat is cut
+     * and becomes a link, and a plan that is mostly repeats stops the run.
+     * Nothing has been drafted yet, so stopping costs nothing more.
+     */
+    const sectionScreen = (await runSectionScreen(pipelineId, research, keywords)).output;
+    if (sectionScreen.stopReason) return getPipelineStatus(pipelineId)!;
+    if (shouldStop('section_screen')) return getPipelineStatus(pipelineId)!;
 
     /* ---- what the pipeline learned, written onto the draft ---------------- */
     // So the article itself reads as a filled-in brief rather than staying blank
@@ -642,15 +708,25 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
     const productDecision = decisionFor<ProductDecision>('products');
     if (productDecision) applyProductDecision(pipeline.articleId, productDecision);
 
-    const brief = buildBrief(pipelineId, research, keywords, classification, template).output as ArticleBrief;
+    const brief = buildBrief(pipelineId, research, keywords, classification, template, briefCoverageFrom(sectionScreen))
+      .output as ArticleBrief;
     if (shouldStop('article_brief')) return getPipelineStatus(pipelineId)!;
 
     /* ---- write ------------------------------------------------------------ */
     const written = (await runArticleGeneration(pipelineId, brief, { confirmedCost })).output as GeneratedArticle;
     if (shouldStop('article_generation')) return getPipelineStatus(pipelineId)!;
 
+    /* ---- coverage gate 3: the draft --------------------------------------
+     * A drafted section that still repeats an existing article goes to the
+     * reviewer as a major issue it cannot waive, so the one revision fixes it.
+     */
+    const draftScreen = (await runDraftScreen(pipelineId, renderArticleMarkdown(written))).output;
+    if (shouldStop('draft_screen')) return getPipelineStatus(pipelineId)!;
+
     /* ---- review ----------------------------------------------------------- */
-    const review = (await runArticleReview(pipelineId, brief, written, { confirmedCost })).output as ArticleReview;
+    const review = (
+      await runArticleReview(pipelineId, brief, written, { confirmedCost, overlaps: draftScreen.overlaps })
+    ).output as ArticleReview;
     if (shouldStop('article_review')) return getPipelineStatus(pipelineId)!;
 
     /* ---- at most one revision --------------------------------------------- */
@@ -678,7 +754,22 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
     }
 
     /* ---- deterministic validation ----------------------------------------- */
-    runFinalValidation(pipelineId);
+    // The finished article, after any revision, against every other one. A
+    // repeat that survived the revision blocks publication. If the check
+    // cannot run, that blocks too: a gate that could not look has not passed.
+    let coverageFindings: ValidationFinding[];
+    try {
+      coverageFindings = await finalCoverageFindings(pipelineId);
+    } catch (error) {
+      coverageFindings = [
+        {
+          severity: 'blocking',
+          check: 'repeats existing article',
+          detail: `The coverage check could not run (${error instanceof Error ? error.message : 'unknown error'}). Resume the run once embedding is available.`,
+        },
+      ];
+    }
+    runFinalValidation(pipelineId, { checked: 'repeats existing article', findings: coverageFindings });
     return getPipelineStatus(pipelineId)!;
   } catch (error) {
     // A checkpoint is not a failure. The run is intact, paid for, and waiting.
@@ -732,7 +823,7 @@ export function decide(
   // advance time. A decision that cannot be honoured must be refused while
   // the person who made it is still looking at the screen.
   if (kind === 'topic') {
-    const output = outputOf<TopicResearchSet>(pipeline, 'topic_research');
+    const output = shortlistOf(pipeline);
     if (!output) return { error: 'The topic research has not run yet.' };
     const applied = applyTopicDecision(output, parsed as TopicDecision);
     if (isDecisionError(applied)) return { error: applied.error };
@@ -899,12 +990,15 @@ export async function rerunForCheckpoint(
     const article = getDatabase()
       .prepare('SELECT topic FROM articles WHERE id = ?')
       .get(pipeline.articleId) as { topic: string | null } | undefined;
-    await runTopicResearch(pipelineId, { seedTopic: article?.topic ?? null, confirmedCost, rerun: true });
+    const fresh = await runTopicResearch(pipelineId, { seedTopic: article?.topic ?? null, confirmedCost, rerun: true });
+    // A new shortlist is screened like the first one, or the editor would be
+    // shown topics the coverage gate never looked at.
+    await runTopicScreen(pipelineId, fresh.output as TopicResearchSet);
     return getPipelineStatus(pipelineId)!;
   }
 
   if (kind === 'keywords_title') {
-    const topicSet = outputOf<TopicResearchSet>(pipeline, 'topic_research');
+    const topicSet = shortlistOf(pipeline);
     if (!topicSet) return { error: 'The topic research is missing, so the keywords cannot be redone.' };
 
     // The keyword stage reads the CHOSEN topic, so the earlier decision is

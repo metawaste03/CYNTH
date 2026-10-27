@@ -325,14 +325,32 @@ export function validateArticle(pipelineId: number): ValidationResult | null {
  * This is where a run ends. There is no path from here back into an AI stage:
  * whatever the result, the next move is a person's.
  */
-export function runFinalValidation(pipelineId: number): { run: StageRunDto; output: ValidationResult } | null {
+export function runFinalValidation(
+  pipelineId: number,
+  /**
+   * Findings computed before this ran — the coverage graph's last check of
+   * the finished article against every other one. Passed in rather than
+   * computed here because that check calls an embedding model, and this
+   * function stays synchronous and deterministic about everything it reads.
+   */
+  extra: { checked: string; findings: ValidationFinding[] } | null = null,
+): { run: StageRunDto; output: ValidationResult } | null {
   const pipeline = getPipelineById(pipelineId);
   if (!pipeline) return null;
 
   setState(pipelineId, 'FINAL_VALIDATION', { stage: 'final_validation' });
 
-  const result = validateArticle(pipelineId);
-  if (!result) return null;
+  const validated = validateArticle(pipelineId);
+  if (!validated) return null;
+
+  const result: ValidationResult = extra
+    ? {
+        ...validated,
+        checked: [...validated.checked, extra.checked],
+        findings: [...validated.findings, ...extra.findings],
+        passed: validated.passed && !extra.findings.some((finding) => finding.severity === 'blocking'),
+      }
+    : validated;
 
   const run = beginStageRun({ pipelineId: pipeline.id, version: pipeline.version, stage: 'final_validation' });
   const completed = completeStageRun(run.id, { output: result });

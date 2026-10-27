@@ -23,6 +23,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-image-test-${process.pid}`);
@@ -123,7 +124,7 @@ const defaultBody = (request: Record<string, unknown>) => {
 
 let stubBody: (request: Record<string, unknown>) => unknown = defaultBody;
 
-globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+globalThis.fetch = withEmbeddings((async (input: string | URL | Request, init?: RequestInit) => {
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   stubCalls.push({
     url: typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url,
@@ -133,7 +134,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     status: stubStatus,
     headers: { 'content-type': 'application/json' },
   });
-}) as typeof fetch;
+}) as typeof fetch);
 
 secrets.setSecret('CYNTH_IMAGE_TEST_KEY', 'not-a-real-credential');
 

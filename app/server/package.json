@@ -16,6 +16,7 @@
     "align:themes": "tsx scripts/align-theme-names.ts",
     "apply:links": "tsx scripts/apply-internal-links.ts",
     "balance": "tsx scripts/area-balance.ts",
+    "coverage": "tsx scripts/coverage-graph.ts",
     "rerun:writer": "tsx scripts/rerun-writer.ts"
   },
   "dependencies": {

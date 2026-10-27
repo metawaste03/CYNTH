@@ -30,6 +30,7 @@ import { AmazonSettings } from './features/amazon/AmazonSettings';
 import { MediaLibrary } from './features/media/MediaLibrary';
 import { GenerateArticle } from './features/pipeline/GenerateArticle';
 import { EditorialSettings } from './features/settings/EditorialSettings';
+import { CoveragePage } from './features/coverage/CoveragePage';
 import { ModelRoles } from './features/pipeline/ModelRoles';
 
 function App() {
@@ -68,6 +69,7 @@ function App() {
         </Route>
         <Route path="seo-review" element={<SeoReview />} />
         <Route path="quality-gate" element={<QualityGate />} />
+        <Route path="coverage" element={<CoveragePage />} />
         <Route path="settings">
           <Route index element={<Settings />} />
           <Route path="ai-providers">

@@ -4,6 +4,7 @@ import { ARTICLE_TYPE_SLUGS } from './pipeline.constants.js';
 import type { ArticleClassification, KeywordResearch, TopicResearch, TopicResearchSet } from './stages/researchStages.service.js';
 import type { TemplateSelection } from './stages/briefStages.service.js';
 import type { ArticleReview } from './stages/generationStages.service.js';
+import type { TopicScreenResult } from './stages/coverageStages.service.js';
 import type { ProductOpportunity } from './stages/productOpportunity.service.js';
 
 /**
@@ -49,17 +50,25 @@ export interface TopicOption {
   likelySearchIntent: string;
   researchSummary: string;
   sourceCount: number;
+  /** What the coverage gate found: the subtopic served, and how close the nearest existing article is. */
+  coverage: { subtopic: string | null; ring: string | null; verdict: string; note: string } | null;
 }
 
 export interface TopicOptions {
   candidates: TopicOption[];
   recommendedIndex: number;
+  /** Topics the coverage gate did not offer, and why. Shown so a short list is explained. */
+  notOffered: { topic: string; outcome: 'dropped' | 'held'; reason: string }[];
 }
 
-export function buildTopicOptions(output: TopicResearchSet): TopicOptions {
+export function buildTopicOptions(output: TopicResearchSet, screen: TopicScreenResult[] = []): TopicOptions {
   const candidates = output.candidates ?? [output];
+  const resultFor = (topic: string) => screen.find((r) => r.topic === topic && r.outcome === 'offered') ?? null;
   return {
     recommendedIndex: output.recommendedIndex ?? 0,
+    notOffered: screen
+      .filter((r): r is TopicScreenResult & { outcome: 'dropped' | 'held' } => r.outcome !== 'offered')
+      .map((r) => ({ topic: r.topic, outcome: r.outcome, reason: r.reason })),
     candidates: candidates.map((candidate, index) => ({
       index,
       topic: candidate.topic,
@@ -75,6 +84,12 @@ export function buildTopicOptions(output: TopicResearchSet): TopicOptions {
       // grounded a candidate is without turning the chooser into a reading
       // exercise. The full research travels with the article regardless.
       sourceCount: candidate.researchSources.length,
+      coverage: (() => {
+        const result = resultFor(candidate.topic);
+        return result
+          ? { subtopic: result.subtopic?.name ?? null, ring: result.subtopic?.ring ?? null, verdict: result.verdict, note: result.reason }
+          : null;
+      })(),
     })),
   };
 }

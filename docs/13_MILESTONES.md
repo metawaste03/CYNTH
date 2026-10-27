@@ -3994,3 +3994,86 @@ to write into a running install.
 **Nothing has been pushed.** The manifest and 25 staged images are written;
 `node scripts/deploy.mjs products` (dry run) then `--apply` is the step that
 touches the live site, and that is the editor's call.
+
+## Milestone 44 — Never Say It Twice (Complete, 2026-10-27)
+
+### The request
+
+Two things, from the editor: as more articles are written, none should repeat
+any part of one that already exists; and each thematic area should widen its
+scope without straying from its core ideas. On the first, the editor asked
+that an article is **never written** once it crosses a similarity threshold
+with what exists, and that Cynth hold a graph memory of the whole catalogue.
+On the second, a subtopic outside an area's scope is proposed, and a person
+approves it before anything is written.
+
+### What was wrong
+
+Topic research saw titles. A title says what an article is called, not what
+it says, so a fresh subject could still re-explain existing sections — and
+did. Caffeine timing is explained in three articles across two areas. The
+budget-workspace article repeats the wrist, chair and screen-height articles.
+Nothing after topic research saw the catalogue at all.
+
+Scope was prose. Each brief lists what is in scope; nothing counted which of
+those subjects had ever been written about.
+
+### The graph (coverage-graph/)
+
+`coverage_articles`, `coverage_points`, `coverage_point_links`,
+`coverage_subtopics`, `coverage_article_subtopics`. Every article is cut into
+points at its headings (each FAQ question separately; stubs under 40 words
+fold into the previous point), each embedded with the model recorded beside
+it. Points across articles at ≥0.70 are linked. Each article's primary
+subtopic is the one its title and introduction sit closest to; a subtopic is
+touched by any section that sits closest to it at ≥0.42.
+
+The graph syncs at the start of every topic research. Only articles whose
+title or text hash changed are embedded, so with nothing new it makes no call.
+
+### The gates
+
+| Stage | Compares | Stops |
+|---|---|---|
+| topic_screen | each proposed topic (topic + angle) against every article's title + introduction | drops ≥0.65; holds a topic in an unapproved subtopic; stops the run when nothing survives |
+| section_screen | each planned section (heading + "covers") against every point; the chosen topic again | cuts ≥0.62; stops when >40% is cut, or the topic is a duplicate |
+| draft_screen | each drafted section against every point | ≥0.76 becomes a major review issue; final validation blocks if it survives |
+
+Thresholds are settings (`coverage.*`), editable on the Coverage page.
+
+Each gate's output records what it judged (`basedOn`), and is recomputed when
+that changes. Topic decisions index into the SCREENED shortlist, and the
+keyword rerun reads it too. A screen that let nothing through is an empty
+shortlist, never a fallback to the unscreened research.
+
+### How the thresholds were set
+
+`scripts/coverage-calibrate.ts` embeds the live catalogue and scores
+everything against everything; `scripts/coverage-probe.ts` scores hand-written
+probes. Reworded duplicates of six existing articles scored 0.67–0.80 on the
+topic comparison (each matched the right article); new in-scope topics
+0.42–0.50; close neighbours 0.59–0.62. Planned sections with a "covers" line:
+duplicates 0.63–0.84, new 0.38–0.58. Headings alone peaked at 0.70 against
+their own duplicates, which is why keyword research now writes a "covers"
+line per section.
+
+### Scope
+
+`coverageScope.ts` writes out each area's core idea, its brief's core
+subtopics, and an adjacent ring (e.g. Fitness Technology's "measured versus
+derived" admits smart scales and blood-pressure cuffs). Topic research must
+name the subtopic each topic serves, or `NEW: <name>` with the part of the core
+idea it serves. A new one is held and appears on the Coverage page. Approved
+subtopics join the ring; rejected ones are listed to topic research as never
+to be proposed.
+
+### Known limitations
+
+- A topic the editor sets in exact mode is never held for scope (it is the
+  editor's own decision), but is still stopped if it duplicates an article.
+- Graph indexing cost is per catalogue, not per article, so it is not in any
+  pipeline's cost breakdown. It is recorded on `coverage_articles`.
+- The draft gate compares sections, not sentences. A single repeated paragraph
+  inside an otherwise new section can score under the threshold.
+- The test article "7 Best Budget Hiking Backpacks" (no area) is indexed and
+  listed to topic research as unassigned context.

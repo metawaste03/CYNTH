@@ -24,6 +24,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 const SCRATCH = path.join(os.tmpdir(), `cynth-guided-test-${process.pid}`);
@@ -67,7 +68,7 @@ const calls: string[] = [];
 const prompts: string[] = [];
 let replies: ((prompt: string) => string) | null = null;
 
-globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+globalThis.fetch = withEmbeddings((async (input: string | URL | Request, init?: RequestInit) => {
   const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
   const prompt = String(body?.messages?.[0]?.content ?? '');
   calls.push(prompt.slice(0, 60));
@@ -80,7 +81,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
     }),
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
-}) as typeof fetch;
+}) as typeof fetch);
 
 secrets.setSecret('CYNTH_GUIDED_TEST_KEY', 'not-a-real-credential');
 

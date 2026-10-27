@@ -133,12 +133,15 @@ export interface StageDefinition {
 
 export const PIPELINE_STAGES = [
   'topic_research',
+  'topic_screen',
   'keyword_research',
   'article_classification',
+  'section_screen',
   'article_brief',
   'template_selection',
   'product_opportunity',
   'article_generation',
+  'draft_screen',
   'amazon_matching',
   'article_review',
   'article_revision',
@@ -222,6 +225,42 @@ export const STAGE_DEFINITIONS: Record<PipelineStage, StageDefinition> = {
     role: 'topic_research',
     runningState: 'RESEARCHING',
     completeState: 'RESEARCH_COMPLETE',
+  },
+  /**
+   * THE COVERAGE GATES (coverage-graph/coverageGraph.service.ts).
+   *
+   * Not "paid" in the sense the spend gate means: they call an embedding
+   * model, not a writer, and a whole article's worth of checks costs well
+   * under a hundredth of a cent. Asking someone to confirm that would be a
+   * question with only one answer. The tokens and cost are still recorded on
+   * the stage run, so the pipeline's cost breakdown stays complete.
+   *
+   * Each one can stop the run. Stopping is the point: an article too close to
+   * one that exists is never drafted.
+   */
+  topic_screen: {
+    stage: 'topic_screen',
+    label: 'Coverage Check: Topics',
+    paid: false,
+    role: null,
+    runningState: 'RESEARCH_COMPLETE',
+    completeState: 'RESEARCH_COMPLETE',
+  },
+  section_screen: {
+    stage: 'section_screen',
+    label: 'Coverage Check: Sections',
+    paid: false,
+    role: null,
+    runningState: 'CLASSIFIED',
+    completeState: 'CLASSIFIED',
+  },
+  draft_screen: {
+    stage: 'draft_screen',
+    label: 'Coverage Check: Draft',
+    paid: false,
+    role: null,
+    runningState: 'GENERATED',
+    completeState: 'GENERATED',
   },
   keyword_research: {
     stage: 'keyword_research',

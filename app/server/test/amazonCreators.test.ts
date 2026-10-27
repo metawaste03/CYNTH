@@ -16,6 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { withEmbeddings } from './helpers/embeddingStub.js';
 import os from 'node:os';
 
 /* ------------------------------------------------------------------ setup */
@@ -55,7 +56,7 @@ let getItemsResponse: { status: number; body: unknown } = { status: 200, body: {
 
 const realFetch = globalThis.fetch;
 
-globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+globalThis.fetch = withEmbeddings((async (input: string | URL | Request, init?: RequestInit) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   calls.push({ url, init });
 
@@ -66,7 +67,7 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
   if (url.includes('/catalog/v1/getItems')) return reply(getItemsResponse.status, getItemsResponse.body);
 
   throw new Error(`Unexpected network call in tests: ${url}`);
-}) as typeof fetch;
+}) as typeof fetch);
 
 /** A Creators API item shaped as the documentation describes: lowerCamelCase, displayValue wrappers. */
 const API_ITEM = {

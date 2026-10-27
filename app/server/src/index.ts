@@ -24,6 +24,7 @@ import { amazonRouter } from './features/product-research/amazon/amazon.routes.j
 import { mediaRouter } from './features/media/media.routes.js';
 import { imagesRouter } from './features/images/images.routes.js';
 import { pipelineRouter } from './features/pipeline/pipeline.routes.js';
+import { coverageGraphRouter } from './features/coverage-graph/coverageGraph.routes.js';
 import { ensureMediaUploadsDir } from './features/media/media.upload.js';
 import { loadSecrets } from './shared/secrets/secretStore.js';
 import { backfillMissingSlugs } from './features/articles/articles.repository.js';
@@ -160,6 +161,9 @@ app.use('/api/featured-image', imagesRouter);
 // The editorial pipeline: theme in, researched and reviewed article out.
 // Cynth owns sequencing, state, idempotency and the revision cap.
 app.use('/api/pipeline', pipelineRouter);
+// The coverage graph: what the publication has already written, and each
+// area's scope (coverage-graph/coverageGraph.service.ts).
+app.use('/api/coverage', coverageGraphRouter);
 
 /**
  * The built client, in production only.
