@@ -21,6 +21,8 @@ export interface CmsConnection {
   hasCredential: boolean;
   defaultRemoteAuthorId: string | null;
   defaultRemoteAuthorName: string | null;
+  /** 'team' attributes every article to the account above; 'author' keeps one account per writing voice. */
+  bylineMode: 'author' | 'team';
   isActive: boolean;
   isDefault: boolean;
   lastStatus: string | null;

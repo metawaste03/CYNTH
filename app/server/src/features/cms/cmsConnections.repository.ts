@@ -35,6 +35,12 @@ export interface CmsConnectionDto {
   hasCredential: boolean;
   defaultRemoteAuthorId: string | null;
   defaultRemoteAuthorName: string | null;
+  /**
+   * 'author': each writing voice is attributed to its own CMS account (the
+   * behaviour before this field existed). 'team': every article is attributed
+   * to `defaultRemoteAuthorId`, whichever voice wrote it.
+   */
+  bylineMode: 'author' | 'team';
   isActive: boolean;
   isDefault: boolean;
   /** The outcome of the last Test Connection. Diagnostics, never a credential. */
@@ -60,6 +66,7 @@ function mapConnection(row: CmsConnectionRow): CmsConnectionDto {
     hasCredential: hasSecret(row.credential_env_var),
     defaultRemoteAuthorId: row.default_remote_author_id,
     defaultRemoteAuthorName: row.default_remote_author_name,
+    bylineMode: (row as any).byline_mode === 'team' ? 'team' : 'author',
     isActive: row.is_active === 1,
     isDefault: row.is_default === 1,
     lastStatus: row.last_status,
@@ -221,6 +228,15 @@ export function setConnectionAuthorMapping(
       WHERE id = ?
     `)
     .run(remoteAuthorId, remoteAuthorName, id);
+  if (result.changes === 0) return null;
+  return getConnectionById(id);
+}
+
+/** One team byline for every article, or each writing voice under its own account. */
+export function setConnectionBylineMode(id: number, mode: 'author' | 'team'): CmsConnectionDto | null {
+  const result = getDatabase()
+    .prepare(`UPDATE cms_connections SET byline_mode = ?, updated_at = datetime('now') WHERE id = ?`)
+    .run(mode === 'team' ? 'team' : null, id);
   if (result.changes === 0) return null;
   return getConnectionById(id);
 }

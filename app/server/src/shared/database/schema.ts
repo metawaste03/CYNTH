@@ -1276,4 +1276,31 @@ CREATE TABLE IF NOT EXISTS coverage_article_subtopics (
   is_primary INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (article_id, subtopic_id)
 );
+
+-- SEARCH DEMAND. What people actually typed into Google, as Search Console
+-- reported it. One row per query and page; an import is a snapshot, so a
+-- later one overwrites the figures rather than adding to them. Topic research
+-- reads this so an article answers a search somebody made.
+CREATE TABLE IF NOT EXISTS search_queries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  query TEXT NOT NULL,
+  -- The page Google showed for it. Empty when the export did not say.
+  page_url TEXT NOT NULL DEFAULT '',
+  clicks INTEGER NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  position REAL,
+  -- The period the figures cover, as the editor described it at import.
+  period TEXT,
+  source TEXT NOT NULL DEFAULT 'gsc_csv',
+  theme_id INTEGER REFERENCES themes(id) ON DELETE SET NULL,
+  -- How the area was decided: 'page' (the ranking page is one of our
+  -- articles), 'match' (the wording matched an article or the area's scope),
+  -- 'manual' (an editor chose it). A manual choice is never overwritten.
+  theme_source TEXT,
+  -- The article that already answers this search, when one does.
+  article_id INTEGER REFERENCES articles(id) ON DELETE SET NULL,
+  imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (query, page_url)
+);
+CREATE INDEX IF NOT EXISTS idx_search_queries_theme ON search_queries(theme_id);
 `;

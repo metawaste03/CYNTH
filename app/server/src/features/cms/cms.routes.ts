@@ -112,6 +112,27 @@ cmsRouter.patch('/connections/:id/author-mapping', (req, res) => {
   res.json({ connection });
 });
 
+/** One team byline for every article, or each writing voice under its own account. */
+cmsRouter.patch('/connections/:id/byline', (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid connection id.'] });
+
+  const mode = req.body?.mode;
+  if (mode !== 'author' && mode !== 'team') {
+    return res.status(400).json({ errors: ['mode must be "author" or "team".'] });
+  }
+
+  const existing = repo.getConnectionById(id);
+  if (!existing) return res.status(404).json({ errors: ['Connection not found.'] });
+  if (mode === 'team' && !existing.defaultRemoteAuthorId) {
+    return res
+      .status(400)
+      .json({ errors: ['Choose the WordPress account that carries the team byline first, under "Attribute posts to".'] });
+  }
+
+  res.json({ connection: repo.setConnectionBylineMode(id, mode) });
+});
+
 cmsRouter.delete('/connections/:id', (req, res) => {
   const id = parseId(req.params.id);
   if (id === null) return res.status(400).json({ errors: ['Invalid connection id.'] });

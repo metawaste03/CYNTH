@@ -681,6 +681,33 @@ test('PUSH: an article author’s own CMS user beats the connection default', as
   connections.setConnectionAuthorMapping(connection.id, null, null);
 });
 
+test('BYLINE: with one team byline on, every article goes out under the chosen account', async () => {
+  resetMock();
+  connections.setConnectionAuthorMapping(connection.id, '7', 'Editorial Team');
+
+  const author = authorsRepo.createAuthor({ name: 'Voice With Its Own Account', category: null } as never);
+  dbModule.getDatabase().prepare('UPDATE authors SET remote_author_id = ? WHERE id = ?').run('42', author.id);
+  const article = await makeGeneratedArticle('Team Byline', author.id);
+
+  // Off (the default): unchanged from before the setting existed.
+  assert.equal(connections.getConnectionById(connection.id)!.bylineMode, 'author');
+  assert.equal(publish.previewMapping(article.id, connection.id).remoteAuthorId, '42');
+
+  connections.setConnectionBylineMode(connection.id, 'team');
+  const preview = publish.previewMapping(article.id, connection.id);
+  assert.equal(preview.remoteAuthorId, '7');
+  assert.equal(preview.remoteAuthorName, 'Editorial Team');
+
+  await publish.pushArticle(article.id, connection.id, 'create');
+  assert.equal(state.writes[0].author, 7);
+
+  // With no account chosen, the switch does nothing rather than fall to the login.
+  connections.setConnectionAuthorMapping(connection.id, null, null);
+  assert.equal(publish.previewMapping(article.id, connection.id).remoteAuthorId, '42');
+
+  connections.setConnectionBylineMode(connection.id, 'author');
+});
+
 test('PUSH: an author with no mapping still falls back to the connection default', async () => {
   resetMock();
   connections.setConnectionAuthorMapping(connection.id, '7', 'Editorial Desk');

@@ -2,6 +2,27 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.58.0] - 2026-11-10
+
+### Fixed
+
+- **"Needs editorial attention" no longer ends a run that was only waiting for a cost confirmation.** 22 of the 23 runs in that state had stopped at the revision step with "This is a paid model. Confirm the estimated cost to continue." The unanswered question was treated as a failed revision, so the revision the reviewer asked for was never written and final validation never ran. The run now waits, like every other paid step.
+
+### Added
+
+- **Search queries** (`/search-queries`). What people typed into Google, filed under the thematic area each belongs to. Topic research is given its area's searches, split into ones no article was matched to and ones an article already answers, and each proposed topic names the search it answers. An area with nothing recorded is told so, and its demand is marked as inferred.
+  - **Direct Search Console connection.** A Google service account key (read-only scope) is stored in the secrets file; Cynth reads the last 28 settled days once a day and on demand. One row per search, with the page that earned most of its impressions. A search already recorded from an export is updated in place and an editor's filing is kept.
+  - **Export upload** remains, for a site with no connection.
+- **New articles link to older ones as they are written.** The writer is given up to eight related, published articles with their live addresses and asked for three to five links in the body. Final validation blocks a link to the site that matches no published article.
+- **Older articles link to a new one** (SEO panel, "Link older articles to this one"). Once an article is live, up to three older, related, published posts each gain one link to it. The live post is read as the site has it, a model chooses which existing words carry the link, and Cynth wraps exactly those words: the saved post differs by one tag, checked by length before sending and by reading it back. Only the post body is sent. Asks before it spends or edits.
+- **One team byline** (Settings, WordPress). A connection can attribute every article to one chosen WordPress account, whichever writing voice wrote it. Off by default, and it does nothing until an account is chosen.
+
+### Changed
+
+- All additions are additive: one new table (`search_queries`), one new column (`cms_connections.byline_mode`), two optional connector methods. Nothing existing changes behaviour until it is switched on.
+
+**Verified**: 605 tests pass. The Search Console connection is tested against a stand-in for Google, not Google itself; the older-article linking against a stand-in WordPress.
+
 ## [0.57.0] - 2026-10-27
 
 ### Added

@@ -540,6 +540,8 @@ Overwrite it anyway?`);
                             ? 'Update'
                             : entry.operation === 'update_published'
                               ? 'Replaced live article'
+                              : entry.operation === 'inbound_link'
+                                ? 'Added a link to a newer article'
                               : entry.operation === 'refresh'
                                 ? 'Status check'
                                 : 'Connection test'}

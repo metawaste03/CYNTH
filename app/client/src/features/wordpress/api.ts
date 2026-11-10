@@ -62,6 +62,11 @@ export function setAuthorMapping(
     .then((r) => r.connection);
 }
 
+/** One team byline for every article, or each writing voice under its own account. */
+export function setBylineMode(id: number, mode: 'author' | 'team'): Promise<CmsConnection> {
+  return api.patch<{ connection: CmsConnection }>(`/cms/connections/${id}/byline`, { mode }).then((r) => r.connection);
+}
+
 export function deleteConnection(id: number): Promise<void> {
   return api.delete(`/cms/connections/${id}`);
 }

@@ -306,6 +306,70 @@ test('OUTPUTS: every stage result is retrievable for inspection', async () => {
   assert.equal((outputs.topic_research as any).recommendedAngle, 'Mechanism first, then recommend.');
 });
 
+test('SPEND: an unconfirmed revision cost leaves the run waiting, not finished', async () => {
+  /**
+   * The reviewer asks for the one revision, and the revision model is paid.
+   * Nobody has confirmed the cost yet. That is a question, not a failure: the
+   * run must stay where it is, and continue once the answer arrives. It used
+   * to end in NEEDS_EDITORIAL_ATTENTION with the revision never written.
+   */
+  const paidModelId = Number(
+    dbModule
+      .getDatabase()
+      .prepare(
+        `INSERT INTO ai_provider_models (provider_id, model_name, is_enabled, prompt_price, completion_price, is_free, cost_tier)
+         VALUES (?, 'stub/paid', 1, 0.000001, 0.000002, 0, 'low')`,
+      )
+      .run(providerId).lastInsertRowid,
+  );
+  roles.setRoleAssignment('article_revision', 'development', { primaryModelId: paidModelId, fallbackModelId: null });
+  settings.setSetting('generation.mode', 'production');
+
+  try {
+    const failingReview = JSON.stringify({
+      revision_required: true,
+      overall_score: 0.52,
+      summary: 'One unsupported claim.',
+      strengths: ['Good structure'],
+      product_assessment: 'No products.',
+      issues: [
+        {
+          severity: 'major',
+          section: 'introduction',
+          problem: 'Claims a reduction in eye strain with no source.',
+          required_change: 'Remove the figure, or attribute it.',
+          scope: 'passage',
+          passage: 'reduces the contrast between a bright screen and a dark room',
+        },
+      ],
+      preserve_sections: ['steps', 'conclusion'],
+    });
+    stage(TOPIC, KEYWORDS, CLASSIFY, ARTICLE, failingReview, ARTICLE);
+
+    const started = orchestrator.startArticlePipeline({ themeId: theme.id, mode: 'development' }) as { pipelineId: number };
+
+    await assert.rejects(
+      () => orchestrator.advancePipeline(started.pipelineId, { confirmedCost: false }),
+      (error: any) => error.code === 'cost_confirmation_required',
+      'the refusal reaches the caller, so the cost can be shown and confirmed',
+    );
+
+    const waiting = repo.getPipelineById(started.pipelineId)!;
+    assert.notEqual(waiting.state, 'NEEDS_EDITORIAL_ATTENTION', 'asking a question must not end the run');
+    assert.equal(waiting.revisionCount, 0, 'nothing ran, so nothing was used up');
+
+    // The answer arrives. The same run carries on, repeating no paid stage.
+    const callsBefore = callCount;
+    const status = await orchestrator.advancePipeline(started.pipelineId, { confirmedCost: true });
+    assert.equal(callCount, callsBefore + 1, 'only the revision is called');
+    assert.equal(repo.getPipelineById(started.pipelineId)!.revisionCount, 1);
+    assert.equal(status.pipeline.state, 'READY', JSON.stringify(status.stages.map((s) => [s.stage, s.status, s.error])));
+  } finally {
+    roles.setRoleAssignment('article_revision', 'development', { primaryModelId: modelId, fallbackModelId: null });
+    settings.setSetting('generation.mode', 'test');
+  }
+});
+
 test.after(() => {
   globalThis.fetch = realFetch;
   dbModule.closeDatabase();

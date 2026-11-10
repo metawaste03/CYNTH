@@ -86,7 +86,7 @@ import {
 } from './stages/coverageStages.service.js';
 import type { TopicScreenOutput } from './stages/coverageStages.service.js';
 import type { ValidationFinding } from './stages/validation.service.js';
-import { GenerationError } from '../generation/generation.errors.js';
+import { GenerationError, isSpendRefusal } from '../generation/generation.errors.js';
 
 /**
  * THE CONDUCTOR.
@@ -742,6 +742,13 @@ export async function advancePipeline(pipelineId: number, options: AdvanceOption
         try {
           await runArticleRevision(pipelineId, written, review, { confirmedCost });
         } catch (error) {
+          // Declining to spend is not a failed revision. Nothing was called and
+          // nothing was charged: the run is waiting for the cost to be
+          // confirmed, exactly as it does before every other paid stage.
+          // Ending the run here stranded 22 of the first 26 runs, with the
+          // revision never written and the final validation never run.
+          if (isSpendRefusal(error)) throw error;
+
           // A failed revision is a handover, not a retry. The article keeps the
           // draft it had, and a person decides what happens next.
           setState(pipelineId, 'NEEDS_EDITORIAL_ATTENTION', {

@@ -10,6 +10,7 @@ import {
   fetchRecentPushHistory,
   fetchRemoteAuthors,
   setAuthorMapping,
+  setBylineMode,
   setConnectionStatus,
   setDefaultConnection,
   testConnection,
@@ -197,6 +198,20 @@ export function WordPressSettings() {
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.errors.join(' ') : 'Could not save the author mapping.');
+    }
+  }
+
+  async function handleBylineChange(connection: CmsConnection, team: boolean) {
+    try {
+      await setBylineMode(connection.id, team ? 'team' : 'author');
+      setFlash(
+        team
+          ? `Every article pushed to ${connection.name} will now carry the byline of ${connection.defaultRemoteAuthorName ?? 'the chosen account'}.`
+          : `Articles pushed to ${connection.name} are attributed to each writing voice's own account again.`,
+      );
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.errors.join(' ') : 'Could not save the byline setting.');
     }
   }
 
@@ -504,6 +519,19 @@ export function WordPressSettings() {
                       Load WordPress Authors
                     </button>
                   )}
+                  <label
+                    title="Writing voices still shape how an article reads. With this on, readers see one byline instead of a persona's name."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={connection.bylineMode === 'team'}
+                      disabled={!connection.defaultRemoteAuthorId}
+                      onChange={(event) => void handleBylineChange(connection, event.target.checked)}
+                    />{' '}
+                    One team byline: attribute every article to{' '}
+                    {connection.defaultRemoteAuthorName ?? 'the account chosen above'}, whichever writing voice wrote it
+                    {!connection.defaultRemoteAuthorId && ' (choose an account first)'}
+                  </label>
                 </div>
               </li>
             );

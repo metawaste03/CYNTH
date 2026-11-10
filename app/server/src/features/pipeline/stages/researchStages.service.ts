@@ -8,6 +8,7 @@ import { getThemeById, getProjectById } from '../../content/content.repository.j
 import { getArticleById } from '../../articles/articles.repository.js';
 import { buildGraphBlock, buildSectionMapBlock, syncCoverageGraph } from '../../coverage-graph/coverageGraph.service.js';
 import { buildBalanceBlock } from '../../articles/areaBalance.service.js';
+import { buildSearchDemandBlock, describeAnsweredSearch } from '../../search-demand/searchDemand.service.js';
 
 /**
  * THE RESEARCH STAGES — topic research, keyword/title research, and article
@@ -84,6 +85,7 @@ function themeContext(pipelineId: number): {
   themeGuidance: string;
   projectRules: string;
   coverage: string;
+  demand: string;
 } {
   const pipeline = getPipelineById(pipelineId);
   const theme = pipeline?.themeId ? getThemeById(pipeline.themeId) : null;
@@ -112,6 +114,12 @@ function themeContext(pipelineId: number): {
     coverage:
       buildGraphBlock(pipeline?.themeId ?? null, theme?.name ?? null, pipeline?.articleId) +
       buildBalanceBlock(theme?.name ?? null),
+    // WHAT PEOPLE ACTUALLY SEARCHED FOR. The stage was forbidden from
+    // inventing demand figures and given none, so every topic was a guess at
+    // what somebody might type. These are the searches Search Console
+    // recorded for this area, split into the ones nothing answers yet and the
+    // ones an article already does.
+    demand: buildSearchDemandBlock(pipeline?.themeId ?? null),
   };
 }
 
@@ -138,6 +146,12 @@ export interface TopicResearch {
   subtopic?: string;
   /** For a NEW subtopic: which part of the area's core idea it serves. */
   coreIdeaServed?: string;
+  /**
+   * The search this topic answers, in a searcher's words: copied from Search
+   * Console where one was recorded, otherwise the question the stage inferred.
+   * Absent on runs researched before search demand existed.
+   */
+  answersQuery?: string;
 }
 
 /**
@@ -157,7 +171,7 @@ export interface TopicResearchSet extends TopicResearch {
 }
 
 function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, topicMode: TopicMode): string {
-  const { themeName, themeGuidance, projectRules, coverage } = themeContext(pipelineId);
+  const { themeName, themeGuidance, projectRules, coverage, demand } = themeContext(pipelineId);
 
   return [
     'You are a senior editorial researcher for a consumer publication. Your job is to decide whether a topic is genuinely worth producing, and to find the strongest angle if it is.',
@@ -175,6 +189,9 @@ function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, 
     // Placed BEFORE the brief so the catalogue is known before a subject is
     // considered, rather than read as an afterthought to a decision already made.
     coverage,
+
+    // After the catalogue, so a search is read knowing what already answers it.
+    demand,
 
     '=== BRIEF ===',
     // EXACT is a different job from EXPLORE, not a stricter version of it.
@@ -217,7 +234,8 @@ function buildTopicResearchPrompt(pipelineId: number, seedTopic: string | null, 
     '  "competing_content_observations": ["what the existing coverage looks like"],',
     '  "research_sources": [{"url": "", "title": "", "note": "why it mattered"}],',
     '  "subtopic": "the subtopic this serves, exactly as named in the scope list, or NEW: <name>",',
-    '  "core_idea_served": "only for a NEW subtopic: which part of the core idea it serves, in one sentence"',
+    '  "core_idea_served": "only for a NEW subtopic: which part of the core idea it serves, in one sentence",',
+    '  "answers_query": "the one search this article answers, in the words a searcher would type"',
     '    }',
     '  ]',
     '}',
@@ -255,6 +273,7 @@ function readTopicCandidate(json: Record<string, unknown>): TopicResearch {
       : [],
     subtopic: str(json, 'subtopic', { max: 200 }) || undefined,
     coreIdeaServed: str(json, 'core_idea_served', { max: 600 }) || undefined,
+    answersQuery: str(json, 'answers_query', { max: 300 }) || undefined,
   };
 }
 
@@ -396,6 +415,9 @@ function buildKeywordPrompt(research: TopicResearch, sectionMap = ''): string {
     `Content gap: ${research.contentGap}`,
     `Likely search intent: ${research.likelySearchIntent}`,
     `Research summary: ${research.researchSummary}`,
+    // The search the article exists to answer, with its recorded figures when
+    // Search Console has them. Empty on research from before search demand.
+    describeAnsweredSearch(research.answersQuery),
     '',
     // What is already written, so the plan does not include a section the
     // section gate would only cut again.

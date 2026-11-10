@@ -1,4 +1,5 @@
 import { CHECKPOINTS_BY_KIND } from './pipeline.constants.js';
+import { findRecordedSearch } from '../search-demand/searchDemand.service.js';
 import type { CheckpointKind } from './pipeline.constants.js';
 import { ARTICLE_TYPE_SLUGS } from './pipeline.constants.js';
 import type { ArticleClassification, KeywordResearch, TopicResearch, TopicResearchSet } from './stages/researchStages.service.js';
@@ -52,6 +53,12 @@ export interface TopicOption {
   sourceCount: number;
   /** What the coverage gate found: the subtopic served, and how close the nearest existing article is. */
   coverage: { subtopic: string | null; ring: string | null; verdict: string; note: string } | null;
+  /**
+   * The search this topic answers, and what Search Console recorded for it.
+   * `recorded` is null when the search was inferred rather than measured.
+   * Null on research from before search demand existed.
+   */
+  answers: { query: string; recorded: { impressions: number; clicks: number; position: number | null } | null } | null;
 }
 
 export interface TopicOptions {
@@ -89,6 +96,17 @@ export function buildTopicOptions(output: TopicResearchSet, screen: TopicScreenR
         return result
           ? { subtopic: result.subtopic?.name ?? null, ring: result.subtopic?.ring ?? null, verdict: result.verdict, note: result.reason }
           : null;
+      })(),
+      answers: (() => {
+        const query = candidate.answersQuery?.trim();
+        if (!query) return null;
+        const recorded = findRecordedSearch(query);
+        return {
+          query,
+          recorded: recorded
+            ? { impressions: recorded.impressions, clicks: recorded.clicks, position: recorded.position }
+            : null,
+        };
       })(),
     })),
   };
@@ -128,6 +146,8 @@ export function applyTopicDecision(
       // them here would attach evidence to an article it was never about.
       researchSources: [],
       competingContentObservations: [],
+      // Nor is the search: it was the one the replaced topic answered.
+      answersQuery: undefined,
       whyNow: '',
       contentGap: '',
     };

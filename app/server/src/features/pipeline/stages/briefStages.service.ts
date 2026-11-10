@@ -9,6 +9,8 @@ import { getAuthorById } from '../../authors/authors.repository.js';
 import { listActiveSharedSkills, listActiveSkillsForAuthor } from '../../authors/authorSkills.repository.js';
 import { getThemeById, getProjectById } from '../../content/content.repository.js';
 import type { BriefCoverage } from './coverageStages.service.js';
+import { listLinkTargets } from '../../seo/linkTargets.service.js';
+import type { LinkTarget } from '../../seo/linkTargets.service.js';
 import type { ArticleClassification, KeywordResearch, TopicResearch } from './researchStages.service.js';
 
 /**
@@ -151,6 +153,12 @@ export interface ArticleBrief {
    * the coverage graph existed.
    */
   coverage?: BriefCoverage | null;
+  /**
+   * Published articles the writer may link to, each with the live address the
+   * site gave it. Absent on briefs built before links were written in at
+   * drafting time; empty when nothing related is published yet.
+   */
+  linkTargets?: LinkTarget[];
 }
 
 /**
@@ -222,6 +230,11 @@ export function buildBrief(
     template,
     editorialRules: project?.editorialGuidance ?? '',
     coverage,
+    linkTargets: listLinkTargets(
+      pipeline.articleId,
+      pipeline.themeId ?? null,
+      [research.topic, keywords.primaryKeyword, ...keywords.secondaryKeywords, ...keywords.entities].join(' '),
+    ),
   };
 
   const completed = completeStageRun(run.id, { output });

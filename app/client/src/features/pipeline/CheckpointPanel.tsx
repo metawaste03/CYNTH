@@ -86,6 +86,20 @@ function TopicChoice({ options, busy, onDecide }: { options: TopicOptions; busy:
                 <dt>Reader</dt>
                 <dd>{candidate.audience || 'Not stated'}</dd>
               </div>
+              {candidate.answers && (
+                <div>
+                  <dt>Answers the search</dt>
+                  <dd>
+                    “{candidate.answers.query}”{' '}
+                    {candidate.answers.recorded
+                      ? `(Search Console: ${candidate.answers.recorded.impressions} impressions` +
+                        (candidate.answers.recorded.position === null
+                          ? ')'
+                          : `, position ${Math.round(candidate.answers.recorded.position)})`)
+                      : '(inferred, not yet recorded by Search Console)'}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>Search</dt>
                 <dd>{candidate.searchOpportunity || 'Not stated'}</dd>

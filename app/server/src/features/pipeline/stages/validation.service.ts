@@ -7,6 +7,9 @@ import { getArticleById } from '../../articles/articles.repository.js';
 import { resolveProductIdsForArticle } from '../../articles/articleProducts.repository.js';
 import { PRODUCT_MARKER_PATTERN } from '../../prompt-builder/promptBuilder.service.js';
 import type { GeneratedArticle } from './generationStages.service.js';
+import { MIN_INTERNAL_LINKS, auditInternalLinks } from '../../seo/linkTargets.service.js';
+import { findCompletedStage } from '../pipeline.repository.js';
+import type { ArticleBrief } from './briefStages.service.js';
 
 /**
  * FINAL VALIDATION — deterministic, and the thing that replaces a second review.
@@ -251,9 +254,14 @@ export function validateArticle(pipelineId: number): ValidationResult | null {
   /* ---- links ------------------------------------------------------------ */
   checked.push('links');
   const linkPattern = /\[[^\]]*\]\(([^)]+)\)/g;
+  const hrefs: string[] = [];
+  for (const entry of stored.faq ?? []) {
+    for (const match of entry.answer.matchAll(linkPattern)) hrefs.push(match[1].trim());
+  }
   for (const section of stored.sections) {
     for (const match of section.body.matchAll(linkPattern)) {
       const href = match[1].trim();
+      hrefs.push(href);
       if (!/^https?:\/\//i.test(href) && !href.startsWith('/')) {
         findings.push({
           severity: 'blocking',
@@ -263,6 +271,28 @@ export function validateArticle(pipelineId: number): ValidationResult | null {
       }
     }
   }
+  // Links to the site itself. One that matches no published article was not
+  // supplied by anything, so it was composed, and it will 404.
+  const internalLinks = auditInternalLinks(hrefs);
+  for (const href of internalLinks.unknown) {
+    findings.push({
+      severity: 'blocking',
+      check: 'links',
+      detail: `"${href}" points at this site but matches no published article. Remove it, or link to a published one.`,
+    });
+  }
+  // Only when enough were on offer: an article with nothing related to link to
+  // has not fallen short of anything.
+  const briefRun = findCompletedStage(pipeline.id, pipeline.version, 'article_brief');
+  const offered = (briefRun?.output as ArticleBrief | undefined)?.linkTargets?.length ?? 0;
+  if (offered >= MIN_INTERNAL_LINKS && internalLinks.internal < MIN_INTERNAL_LINKS) {
+    findings.push({
+      severity: 'warning',
+      check: 'links',
+      detail: `The article links to ${internalLinks.internal} other article(s) on the site; ${offered} related ones were offered and at least ${MIN_INTERNAL_LINKS} are wanted.`,
+    });
+  }
+
   for (const source of stored.sources) {
     if (!/^https?:\/\//i.test(source.url)) {
       findings.push({ severity: 'blocking', check: 'links', detail: `The source "${source.url}" is not a valid URL.` });

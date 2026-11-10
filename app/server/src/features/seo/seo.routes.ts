@@ -1,5 +1,6 @@
 import { runSeoRevision } from './seoRevision.service.js';
 import { applyApprovedInternalLinks } from './internalLinks.service.js';
+import { linkOlderArticlesTo } from '../cms/inboundLinks.service.js';
 import { Router } from 'express';
 import type { Response } from 'express';
 import * as repo from './seo.repository.js';
@@ -456,6 +457,26 @@ seoRouter.post('/articles/:id/apply-internal-links', async (req, res) => {
       return res.status(error.httpStatus ?? 400).json({ errors: [error.message], code: error.code });
     }
     res.status(500).json({ errors: [error instanceof Error ? error.message : 'Placing the links failed.'] });
+  }
+});
+
+/**
+ * The other direction: older, related, published articles gain one link each
+ * to this article. Edits live posts, one sentence at a time, so it is only
+ * ever started by an editor, and only once this article is itself live.
+ */
+seoRouter.post('/articles/:id/link-older-articles', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid article id.'] });
+
+  try {
+    const result = await linkOlderArticlesTo(id, { confirmedCost: req.body?.confirmedCost === true });
+    res.json({ result });
+  } catch (error) {
+    if (isGenerationError(error)) {
+      return res.status(error.httpStatus ?? 400).json({ errors: [error.message], code: error.code });
+    }
+    res.status(500).json({ errors: [error instanceof Error ? error.message : 'Linking the older articles failed.'] });
   }
 });
 

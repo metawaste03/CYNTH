@@ -170,7 +170,7 @@ export function deleteLink(articleId: number, connectionId: number): boolean {
  * collapsing it into an ordinary update would hide exactly the events anyone
  * would come here to find.
  */
-export type CmsPushOperation = 'create' | 'update' | 'update_published' | 'test' | 'refresh';
+export type CmsPushOperation = 'create' | 'update' | 'update_published' | 'inbound_link' | 'test' | 'refresh';
 
 export interface RecordPushInput {
   articleId: number | null;

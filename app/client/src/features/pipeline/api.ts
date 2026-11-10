@@ -21,6 +21,8 @@ export interface TopicOption {
   sourceCount: number;
   /** What the coverage gate found. Null on runs from before it existed. */
   coverage?: { subtopic: string | null; ring: string | null; verdict: string; note: string } | null;
+  /** The search this topic answers. `recorded` is null when the demand is inferred, not measured. */
+  answers?: { query: string; recorded: { impressions: number; clicks: number; position: number | null } | null } | null;
 }
 
 export interface TopicOptions {

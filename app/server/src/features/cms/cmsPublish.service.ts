@@ -86,7 +86,7 @@ export function isValidPushMode(value: unknown): value is PushMode {
 
 /* ------------------------------------------------------------- resolution --- */
 
-interface ResolvedTarget {
+export interface ResolvedTarget {
   connection: CmsConnectionDto;
   connector: CmsConnector;
   /** Server-side only. Never returned by a route, never logged, never persisted. */
@@ -101,6 +101,11 @@ interface ResolvedTarget {
  * configuration problem the user must fix before anything can be sent.
  */
 function resolveTarget(connectionId: number | null): ResolvedTarget {
+  return resolveCmsTarget(connectionId);
+}
+
+/** Exported for the services that edit a live post outside a push (inboundLinks.service.ts). */
+export function resolveCmsTarget(connectionId: number | null): ResolvedTarget {
   const connection = connectionId === null ? getDefaultConnection() : getConnectionById(connectionId);
 
   if (!connection) {
@@ -243,6 +248,14 @@ export function buildDraftPayload(article: ArticleDraftDto, connection: CmsConne
  * exactly as it always did rather than failing.
  */
 function resolveRemoteAuthorId(article: ArticleDraftDto, connection: CmsConnectionDto): string | null {
+  // One team byline: the site's chosen account, whichever voice wrote it.
+  // The voice still shapes the writing; it is no longer presented to readers
+  // as a named person. Only when an account has been chosen, so switching
+  // this on can never silently attribute articles to the login Cynth uses.
+  if (connection.bylineMode === 'team' && connection.defaultRemoteAuthorId) {
+    return connection.defaultRemoteAuthorId;
+  }
+
   if (article.authorId !== null) {
     const author = getAuthorById(article.authorId);
     const mapped = author?.remoteAuthorId?.trim();

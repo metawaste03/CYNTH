@@ -26,6 +26,7 @@ import { buildGenerationContext } from '../../generation/generationContext.servi
 import { GenerationError, isSpendRefusal } from '../../generation/generation.errors.js';
 import { coverageIssuesFor, describeBriefCoverage, describeDraftOverlaps } from './coverageStages.service.js';
 import type { DraftOverlap } from '../../coverage-graph/coverageGraph.service.js';
+import { describeLinkTargets } from '../../seo/linkTargets.service.js';
 import type { ArticleBrief } from './briefStages.service.js';
 
 /**
@@ -289,6 +290,9 @@ function buildWriterPrompt(pipelineId: number, brief: ArticleBrief): string {
     // What the section gate found already written. After the brief so it is
     // read as a constraint on the plan above, before the template is laid out.
     describeBriefCoverage(brief.coverage),
+    // What is live and worth linking to, so the links are written into the
+    // sentences they belong to rather than fitted in after the fact.
+    describeLinkTargets(brief.linkTargets),
     `=== TEMPLATE: ${template.name} (${template.templateId} v${template.version}) ===`,
     // A band rather than a floor. Given only a minimum, a model has exactly
     // one direction to push in, and every article came out long.

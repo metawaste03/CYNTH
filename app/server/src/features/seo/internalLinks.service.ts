@@ -11,7 +11,7 @@ import {
   buildVoiceBlock,
 } from '../pipeline/stages/generationStages.service.js';
 import type { GeneratedArticle } from '../pipeline/stages/generationStages.service.js';
-import { listLinksForArticle } from '../cms/cmsLinks.repository.js';
+import { resolvePublicUrl } from './linkTargets.service.js';
 import { listInternalLinksForArticle, setInternalLinkStatus } from './seo.repository.js';
 import type { InternalLinkOpportunity } from './seo.types.js';
 
@@ -73,30 +73,9 @@ export interface InternalLinkApplyResult {
   articleChanged: boolean;
 }
 
-/**
- * A URL a reader could actually follow, or null.
- *
- * `?p=` is the tell for an unpublished post: WordPress only mints a pretty
- * permalink once the post is public, and the query form 404s for anyone who is
- * not logged in. Requiring `publish` AND a clean path means a link Cynth makes
- * is one a visitor can use.
- */
-export function resolvePublicUrl(targetArticleId: number): string | null {
-  const candidates = listLinksForArticle(targetArticleId)
-    .filter((link) => link.externalStatus === 'publish')
-    .filter((link) => typeof link.externalUrl === 'string' && /^https?:\/\//i.test(link.externalUrl))
-    .filter((link) => !/[?&]p=\d/i.test(link.externalUrl!))
-    // https over http, then the most recent push. Deliberately NOT the default
-    // connection: the default here is a dead local install, so trusting that
-    // flag would link every article to everyfivedays.local.
-    .sort((a, b) => {
-      const secure = Number(b.externalUrl!.startsWith('https://')) - Number(a.externalUrl!.startsWith('https://'));
-      if (secure !== 0) return secure;
-      return (b.lastPushedAt ?? '').localeCompare(a.lastPushedAt ?? '');
-    });
-
-  return candidates[0]?.externalUrl ?? null;
-}
+// Lives beside the list of link targets the writer is given, so both agree on
+// what counts as a page a reader can open.
+export { resolvePublicUrl };
 
 /** Every piece of prose a link could live in. Headings are not among them. */
 function proseOf(article: GeneratedArticle): string {

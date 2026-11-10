@@ -14,6 +14,7 @@ import {
   writeSearchMetadata,
   applyFindings,
   applyInternalLinks,
+  linkOlderArticles,
 } from './api';
 import { SeoScoreCard } from './SeoScoreCard';
 import { SeoFindingsList } from './SeoFindingsList';
@@ -174,6 +175,46 @@ export function SeoPanel({ articleId, onChanged }: SeoPanelProps) {
    * in, what was already there, and what is held back with the reason, which
    * is usually that the target is not published yet.
    */
+  /**
+   * The other direction: older live articles gain a link to this one.
+   *
+   * Always asks first, because it changes posts that are already published.
+   */
+  async function linkFromOlderArticles(confirmedCost: boolean) {
+    setFixBusy(true);
+    setMetaNotice(null);
+    setMetaError(null);
+    try {
+      const { result } = await linkOlderArticles(articleId, confirmedCost);
+      const parts: string[] = [];
+      if (result.linked.length) {
+        parts.push(
+          `Linked from ${result.linked.length} older article(s): ` +
+            result.linked.map((entry) => `${entry.title} (on the words "${entry.anchor}")`).join('; ') +
+            '. The links are live now.',
+        );
+      }
+      if (result.alreadyLinked.length) parts.push(`${result.alreadyLinked.length} already linked here.`);
+      if (result.skipped.length) {
+        parts.push(`${result.skipped.length} left unchanged: ${result.skipped[0].title}: ${result.skipped[0].reason}`);
+      }
+      setMetaNotice(parts.join(' ') || 'No older article was changed.');
+      await load();
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'cost_confirmation_required') {
+        if (window.confirm(`${error.errors.join(' ')}\n\nGo ahead?`)) {
+          setFixBusy(false);
+          return linkFromOlderArticles(true);
+        }
+        setFixBusy(false);
+        return;
+      }
+      setMetaError(error instanceof ApiError ? error.errors.join(' ') : 'Could not link the older articles.');
+    } finally {
+      setFixBusy(false);
+    }
+  }
+
   async function placeInternalLinks(confirmedCost: boolean) {
     setFixBusy(true);
     setMetaNotice(null);
@@ -446,6 +487,16 @@ Place them?`)) {
           title="Sends only the SEO fields to WordPress. Safe on a published post — it cannot change the article, its slug or its published state."
         >
           {pushBusy ? 'Sending…' : 'Push SEO metadata to WordPress'}
+        </button>
+
+        <button
+          type="button"
+          className="button"
+          disabled={fixBusy || !overview.hasContent}
+          onClick={() => void linkFromOlderArticles(false)}
+          title="Once this article is published: adds one link to it in up to three older, related articles on the live site. Changes one sentence in each and nothing else. Asks before it spends or edits."
+        >
+          {fixBusy ? 'Working…' : 'Link older articles to this one'}
         </button>
       </div>
 

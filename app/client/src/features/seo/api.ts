@@ -221,3 +221,22 @@ export function applyInternalLinks(
 }> {
   return api.post(`/seo/articles/${articleId}/apply-internal-links`, { confirmedCost });
 }
+
+/**
+ * Older, related, published articles each gain one link to this article.
+ *
+ * Paid (one small call per older article) and it edits live posts, one
+ * sentence each, so it asks for confirmation first. Only works once this
+ * article is itself published.
+ */
+export interface InboundLinkResult {
+  url: string;
+  linked: { articleId: number; title: string; anchor: string }[];
+  alreadyLinked: { articleId: number; title: string }[];
+  skipped: { articleId: number; title: string; reason: string }[];
+  model: string | null;
+}
+
+export function linkOlderArticles(articleId: number, confirmedCost: boolean): Promise<{ result: InboundLinkResult }> {
+  return api.post(`/seo/articles/${articleId}/link-older-articles`, { confirmedCost });
+}

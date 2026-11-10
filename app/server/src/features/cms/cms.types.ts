@@ -259,6 +259,25 @@ export interface CmsConnector {
   /** Reads a post's current state. Null when the CMS no longer has it. */
   getPost(externalId: string, context: CmsCallContext): Promise<CmsRemotePost | null>;
 
+  /**
+   * The body of a post exactly as the CMS stores it, unrendered. Null when
+   * the CMS no longer has it. A read; changes nothing.
+   *
+   * Optional, with `updatePublishedBody`: together they let Cynth change one
+   * sentence of a live post that has been edited on the site since Cynth last
+   * pushed it, without overwriting those edits with its own older copy.
+   */
+  getPostBody?(externalId: string, context: CmsCallContext): Promise<string | null>;
+
+  /**
+   * Replaces the body of a published post with `content`, which must be the
+   * body `getPostBody` returned with the caller's change applied.
+   *
+   * Implementations must send the body and NOTHING else: no status, slug,
+   * title, excerpt, author or category.
+   */
+  updatePublishedBody?(externalId: string, content: string, context: CmsCallContext): Promise<CmsRemotePost>;
+
   /** The remote users posts can be attributed to, for the author mapping. Optional — not every CMS exposes one. */
   listAuthors?(context: CmsCallContext): Promise<CmsRemoteAuthor[]>;
 }

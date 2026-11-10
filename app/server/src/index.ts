@@ -25,12 +25,14 @@ import { mediaRouter } from './features/media/media.routes.js';
 import { imagesRouter } from './features/images/images.routes.js';
 import { pipelineRouter } from './features/pipeline/pipeline.routes.js';
 import { coverageGraphRouter } from './features/coverage-graph/coverageGraph.routes.js';
+import { searchDemandRouter } from './features/search-demand/searchDemand.routes.js';
 import { ensureMediaUploadsDir } from './features/media/media.upload.js';
 import { loadSecrets } from './shared/secrets/secretStore.js';
 import { backfillMissingSlugs } from './features/articles/articles.repository.js';
 import { backfillMissingVendors } from './features/products/products.repository.js';
 import { serveBuiltClient } from './shared/static/clientStatic.js';
 import { startCmsStatusSync } from './features/cms/cmsPublish.service.js';
+import { startSearchConsoleSync } from './features/search-demand/searchConsole.service.js';
 
 const app = express();
 
@@ -165,6 +167,9 @@ app.use('/api/pipeline', pipelineRouter);
 // area's scope (coverage-graph/coverageGraph.service.ts).
 app.use('/api/coverage', coverageGraphRouter);
 
+// What people searched for, as Search Console reported it. Read by topic research.
+app.use('/api/search-demand', searchDemandRouter);
+
 /**
  * The built client, in production only.
  *
@@ -192,6 +197,7 @@ const server = app.listen(env.port, env.host, () => {
 // Publishing happens in WordPress, where Cynth cannot see it. Re-read every
 // pushed post's status shortly after start and then every 15 minutes.
 startCmsStatusSync();
+startSearchConsoleSync();
 
 function shutdown() {
   server.close(() => {

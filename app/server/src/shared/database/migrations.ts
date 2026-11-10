@@ -454,6 +454,19 @@ const CMS_SEO_TARGET_COLUMNS_TO_ADD: { name: string; type: string }[] = [
   { name: 'seo_target', type: 'TEXT' },
 ];
 
+/**
+ * Whose name goes on the article in the CMS.
+ *
+ * NULL keeps what every connection did before: each writing voice is
+ * attributed to its own CMS account. 'team' attributes every article to the
+ * connection's chosen account instead, so the site can carry one honest
+ * "editorial team" byline rather than the names of personas who are writing
+ * styles, not people.
+ */
+const CMS_BYLINE_COLUMNS_TO_ADD: { name: string; type: string }[] = [
+  { name: 'byline_mode', type: 'TEXT' },
+];
+
 function addMissingColumns(db: DatabaseSync, table: string, columns: { name: string; type: string }[]): void {
   const existingColumns = new Set(
     (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as ColumnInfo[]).map((column) => column.name),
@@ -497,6 +510,7 @@ export function runMigrations(db: DatabaseSync): void {
   addMissingColumns(db, 'article_pipelines', PIPELINE_RUN_MODE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'article_pipelines', PIPELINE_TOPIC_MODE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'cms_connections', CMS_SEO_TARGET_COLUMNS_TO_ADD);
+  addMissingColumns(db, 'cms_connections', CMS_BYLINE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_GENERATION_COLUMNS_TO_ADD);
   addMissingColumns(db, 'articles', ARTICLE_CONTENT_COLUMNS_TO_ADD);

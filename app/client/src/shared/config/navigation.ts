@@ -14,5 +14,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'seo-review', label: 'SEO Review', path: '/seo-review', icon: 'seoReview' },
   { id: 'quality-gate', label: 'Quality Gate', path: '/quality-gate', icon: 'qualityGate' },
   { id: 'coverage', label: 'Coverage', path: '/coverage', icon: 'coverage' },
+  { id: 'search-queries', label: 'Search Queries', path: '/search-queries', icon: 'seoReview' },
   { id: 'settings', label: 'Settings', path: '/settings', icon: 'settings' },
 ];

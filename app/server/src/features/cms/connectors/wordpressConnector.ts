@@ -673,6 +673,37 @@ export const wordpressConnector: CmsConnector = {
     return mapPost(response.json, context.baseUrl);
   },
 
+  /** The stored body, unrendered: `content.raw`, which WordPress only gives an account that may edit the post. */
+  async getPostBody(externalId: string, context: CmsCallContext): Promise<string | null> {
+    const response = await callWordPress(
+      `${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}?context=edit&_fields=id,content`,
+      { method: 'GET', headers: { authorization: authHeader(context) } },
+    );
+
+    if (response.status === 404) return null;
+    if (!response.ok) throwForFailure(response, context, 'read this post');
+    const raw = (response.json as { content?: { raw?: unknown } } | null)?.content?.raw;
+    if (typeof raw !== 'string') {
+      throw new CmsError(
+        'authorization_failed',
+        'WordPress did not return the editable text of this post. The account Cynth signs in with must be allowed to edit published posts (Editor or Administrator).',
+      );
+    }
+    return raw;
+  },
+
+  /** `content` and nothing else, so the post's status, address, title and author cannot move. */
+  async updatePublishedBody(externalId: string, content: string, context: CmsCallContext): Promise<CmsRemotePost> {
+    const response = await callWordPress(`${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}`, {
+      method: 'POST',
+      headers: { authorization: authHeader(context) },
+      body: { content },
+    });
+
+    if (!response.ok) throwForFailure(response, context, 'edit this post');
+    return mapPost(response.json, context.baseUrl);
+  },
+
   async getPost(externalId: string, context: CmsCallContext): Promise<CmsRemotePost | null> {
     const response = await callWordPress(
       `${apiRoot(context.baseUrl)}/wp/v2/posts/${encodeURIComponent(externalId)}?context=edit`,
