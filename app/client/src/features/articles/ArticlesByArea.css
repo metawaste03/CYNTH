@@ -1,0 +1,159 @@
+.aba__totals {
+  margin-bottom: var(--space-5);
+  font-size: 13.5px;
+  color: var(--color-text-muted);
+}
+
+.aba__area {
+  margin-bottom: var(--space-6);
+}
+
+.aba__area-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+
+.aba__area-head h2 {
+  font-size: 15px;
+}
+
+.aba__area-meta {
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+}
+
+.aba__table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  font-size: 13px;
+}
+
+.aba__table th,
+.aba__table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.aba__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.aba__table th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+}
+
+.aba__table td a {
+  color: var(--color-text);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.aba__table td a:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+/* Tabular figures so a column of counts lines up and can be scanned. */
+.aba__col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.aba__col-id {
+  width: 1%;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-subtle);
+}
+
+/* An article with no body is a row about an intention, not a piece of work. */
+.aba__row--empty td {
+  opacity: 0.62;
+}
+
+.aba__not-written {
+  margin-left: var(--space-2);
+  font-size: 11px;
+  color: var(--color-text-subtle);
+}
+
+.aba__where {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.aba__where--live {
+  background: rgba(31, 122, 72, 0.12);
+  color: #1f7a48;
+  text-decoration: none;
+}
+
+.aba__where--draft {
+  background: rgba(176, 124, 20, 0.14);
+  color: #8a6212;
+}
+
+.aba__where--none {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+}
+
+.aba__seo {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.aba__seo--good { color: #1f7a48; }
+.aba__seo--fair { color: #8a6212; }
+.aba__seo--poor { color: #a63329; }
+.aba__seo--none { color: var(--color-text-subtle); font-weight: 400; }
+
+/* A stale score is not a worse score — it is a score for a different article,
+   so it is greyed and labelled rather than coloured by band. */
+.aba__seo--stale {
+  color: var(--color-text-subtle);
+}
+
+.aba__seo-note {
+  margin-left: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #a63329;
+}
+
+.aba__empty {
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 860px) {
+  /* The table stays readable by dropping the columns that are context rather
+     than answer. Title, words and where it is are the ones worth the width. */
+  .aba__table th:nth-child(6),
+  .aba__table td:nth-child(6),
+  .aba__table th:nth-child(7),
+  .aba__table td:nth-child(7) {
+    display: none;
+  }
+}

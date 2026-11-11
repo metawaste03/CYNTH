@@ -1,18 +1,39 @@
-import { useState, type FormEvent } from 'react';
-import type { ProductInput } from '../../shared/types/product';
+import { useEffect, useState, type FormEvent } from 'react';
+import type { PickBadge, ProductInput } from '../../shared/types/product';
+import { PICK_BADGE_OPTIONS } from '../../shared/types/product';
 import { ApiError } from '../../shared/services/apiClient';
+import type { Theme } from '../../shared/types/content';
+import { fetchThemes } from '../content/api';
 import './ProductForm.css';
 
 export interface ProductFormValues {
   title: string;
   brand: string;
   category: string;
+  isFeaturedPick: boolean;
+  /** '' for no badge. */
+  pickBadge: PickBadge | '';
   shortDescription: string;
   description: string;
   affiliateLink: string;
   editorialFit: string;
   notes: string;
   isActive: boolean;
+  /** The thematic area this product belongs to. Empty string means none (Milestone 18). */
+  themeId: string;
+  /**
+   * What the article writer actually reads (Milestone 27).
+   *
+   * These were previously writable only by product research. A product added
+   * by hand reached the writer as a name and a brand, which is enough to
+   * mention it and not enough to place it — so a manually added product could
+   * only ever land decoratively.
+   */
+  useCase: string;
+  problemSolved: string;
+  bestFor: string;
+  /** One per line in the field, sent as a list. */
+  keyFeatures: string;
 }
 
 export interface PickedImage {
@@ -33,12 +54,19 @@ const EMPTY_VALUES: ProductFormValues = {
   title: '',
   brand: '',
   category: '',
+  isFeaturedPick: false,
+  pickBadge: '',
   shortDescription: '',
   description: '',
   affiliateLink: '',
   editorialFit: '',
   notes: '',
   isActive: true,
+  themeId: '',
+  useCase: '',
+  problemSolved: '',
+  bestFor: '',
+  keyFeatures: '',
 };
 
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/gif';
@@ -49,6 +77,40 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
   const [additionalImages, setAdditionalImages] = useState<PickedImage[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // The thematic areas are data, so the picker is built from whatever the
+  // project has configured — never from a list written into this component.
+  const [themes, setThemes] = useState<Theme[]>([]);
+  useEffect(() => {
+    fetchThemes({ activeOnly: true })
+      .then(setThemes)
+      .catch(() => setThemes([]));
+  }, []);
+
+  /**
+   * Choosing a thematic area sets the category to match.
+   *
+   * It does NOT overwrite a category the editor has deliberately made
+   * different — only one that is empty or still matches the theme it was
+   * following. Otherwise changing the theme would quietly undo a considered
+   * choice, which is the opposite of helpful.
+   */
+  function chooseTheme(next: string) {
+    // Everything is read inside the updater rather than from the closure, so
+    // two quick changes in a row cannot leave the category following a theme
+    // that is no longer selected.
+    setValues((current) => {
+      const previous = themes.find((theme) => String(theme.id) === current.themeId);
+      const chosen = themes.find((theme) => String(theme.id) === next);
+      const followingTheme = !current.category || current.category === previous?.name;
+
+      return {
+        ...current,
+        themeId: next,
+        category: followingTheme ? (chosen?.name ?? '') : current.category,
+      };
+    });
+  }
 
   function updateField<K extends keyof ProductFormValues>(key: K, value: ProductFormValues[K]) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -87,12 +149,28 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           title: values.title.trim(),
           brand: values.brand.trim() || undefined,
           category: values.category.trim() || undefined,
+          isFeaturedPick: values.isFeaturedPick,
+          // Always sent, so choosing "No badge" really clears one.
+          pickBadge: values.pickBadge || null,
           shortDescription: values.shortDescription.trim() || undefined,
           description: values.description.trim() || undefined,
           affiliateLink: values.affiliateLink.trim() || undefined,
           editorialFit: values.editorialFit.trim() || undefined,
           notes: values.notes.trim() || undefined,
           isActive: values.isActive,
+          // null rather than undefined, so choosing "No thematic area" on an
+          // edit actually clears an existing association.
+          themeId: values.themeId ? Number(values.themeId) : null,
+          // Sent even when blank, so clearing one of these on an edit actually
+          // clears it. The server distinguishes an empty string (a deliberate
+          // clear) from an absent field (leave what research wrote).
+          useCase: values.useCase.trim(),
+          problemSolved: values.problemSolved.trim(),
+          bestFor: values.bestFor.trim(),
+          keyFeatures: values.keyFeatures
+            .split('\n')
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0),
         },
         images,
       );
@@ -126,9 +204,85 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
           <input value={values.brand} onChange={(e) => updateField('brand', e.target.value)} />
         </label>
         <label>
-          Category
-          <input value={values.category} onChange={(e) => updateField('category', e.target.value)} />
+          Thematic Area
+          <select value={values.themeId} onChange={(e) => chooseTheme(e.target.value)}>
+            <option value="">No thematic area</option>
+            {themes.map((theme) => (
+              <option key={theme.id} value={String(theme.id)}>
+                {theme.name}
+              </option>
+            ))}
+          </select>
+          <span className="product-form__hint">
+            Which content area this product belongs to. Optional, and it never stops a product being used in another
+            area — it gives the generation step extra context about relevance.
+          </span>
         </label>
+
+        {/* Below the thematic area, because it follows from it. This was a
+            free-text box beside the dropdown and the two said the same thing,
+            so it collected variants of the dropdown's own answer: "Pet
+            Product", "Pet Products", "Pet Device", "Pet device", "Sleep
+            Gadget", "Sleep Gadgets", "Cognitive Permance". Seventeen
+            categories for thirty-four products. */}
+        <label>
+          Category
+          <select value={values.category} onChange={(e) => updateField('category', e.target.value)}>
+            <option value="">No category</option>
+            {themes.map((theme) => (
+              <option key={theme.id} value={theme.name}>
+                {theme.name}
+              </option>
+            ))}
+            {/* A value from before the list settled stays selectable, so
+                editing an old product does not silently re-file it. */}
+            {values.category && !themes.some((theme) => theme.name === values.category) && (
+              <option value={values.category}>{values.category} (old)</option>
+            )}
+          </select>
+          <span className="product-form__hint">
+            Set from the thematic area above. Change it only if this product genuinely belongs somewhere else.
+          </span>
+        </label>
+
+        {/* The flag the site's picks row selects on. Kept here rather than in
+            WordPress because it is an editorial decision made while looking at
+            the product — and because a flag held only on the site would be
+            overwritten the next time the registry was pushed. */}
+        <label className="product-form__check">
+          <input
+            type="checkbox"
+            checked={values.isFeaturedPick}
+            onChange={(e) => updateField('isFeaturedPick', e.target.checked)}
+          />
+          Editor&rsquo;s pick
+          <span className="product-form__hint">
+            Shows this product in its category&rsquo;s editors&rsquo; review section on EveryFiveDays. Each area shows
+            up to three picks, badged ones first.
+          </span>
+        </label>
+
+        {/* Only meaningful for a pick, so only offered for one. The stored
+            value is kept if the pick is unticked, and the site ignores it. */}
+        {values.isFeaturedPick && (
+          <label>
+            Badge
+            <select
+              value={values.pickBadge}
+              onChange={(e) => updateField('pickBadge', e.target.value as PickBadge | '')}
+            >
+              <option value="">No badge</option>
+              {PICK_BADGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <span className="product-form__hint">
+              The label in the corner of this product&rsquo;s card. Use each badge once per area.
+            </span>
+          </label>
+        )}
         <label>
           Short Description
           <textarea rows={2} value={values.shortDescription} onChange={(e) => updateField('shortDescription', e.target.value)} />
@@ -144,6 +298,51 @@ export function ProductForm({ initialValues, showImagePicker, submitLabel, onSub
         <label>
           Affiliate Link
           <input value={values.affiliateLink} onChange={(e) => updateField('affiliateLink', e.target.value)} placeholder="https://…" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>What it is for</legend>
+        <p className="product-form__hint">
+          These are the fields the article writer reads. They are what let it place a product where the article is
+          already discussing that problem, rather than dropping it in. Product research fills them in automatically
+          when it runs; until then, or instead, write them yourself.
+        </p>
+        <label>
+          What it is for
+          <textarea
+            rows={2}
+            value={values.useCase}
+            onChange={(e) => updateField('useCase', e.target.value)}
+            placeholder="All-day standing at a fixed-height desk"
+          />
+        </label>
+        <label>
+          The problem it solves
+          <textarea
+            rows={2}
+            value={values.problemSolved}
+            onChange={(e) => updateField('problemSolved', e.target.value)}
+            placeholder="Foot and lower-back fatigue from standing on a hard floor"
+          />
+        </label>
+        <label>
+          Best for
+          <textarea
+            rows={2}
+            value={values.bestFor}
+            onChange={(e) => updateField('bestFor', e.target.value)}
+            placeholder="People who already stand most of the day"
+          />
+        </label>
+        <label>
+          Key features
+          <textarea
+            rows={4}
+            value={values.keyFeatures}
+            onChange={(e) => updateField('keyFeatures', e.target.value)}
+            placeholder={'One per line\nSculpted terrain\nPolyurethane foam'}
+          />
         </label>
       </fieldset>
 

@@ -77,3 +77,27 @@
   display: flex;
   gap: var(--space-2);
 }
+
+/* "Publish products to EveryFiveDays" sits beside Add Product. */
+.products-list__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+  align-items: center;
+}
+
+.products-list__publish-summary {
+  margin: 0;
+}
+
+/* The commands' own output, shown only when a publish fails. */
+.products-list__publish-output {
+  max-height: 240px;
+  overflow: auto;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+}

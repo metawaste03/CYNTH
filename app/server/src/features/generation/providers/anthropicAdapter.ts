@@ -50,14 +50,16 @@ export const anthropicAdapter: ProviderAdapter = {
       { 'x-api-key': context.apiKey, 'anthropic-version': ANTHROPIC_API_VERSION },
       {
         model: request.model,
-        max_tokens: ANTHROPIC_MAX_OUTPUT_TOKENS,
+        // Anthropic requires an explicit cap, so one is always sent. A caller
+        // that asked for a smaller one (the model test) gets it.
+        max_tokens: request.maxOutputTokens ?? ANTHROPIC_MAX_OUTPUT_TOKENS,
         messages: [{ role: 'user', content: request.prompt }],
       },
       request.timeoutMs,
     );
 
     if (!response.ok) throwForFailedResponse(response, context.apiKey);
-    if (!response.json) throwForUnparsableBody();
+    if (!response.json) throwForUnparsableBody(response);
 
     return {
       text: readText(response.json),

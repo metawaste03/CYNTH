@@ -1,0 +1,21 @@
+{
+  "name": "cynth",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cynth — content production system. Root orchestration for the client and server workspaces.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "install:all": "npm --prefix app/server install && npm --prefix app/client install",
+    "build:client": "npm --prefix app/client run build",
+    "build:server": "npm --prefix app/server run build",
+    "build": "npm run build:client && npm run build:server",
+    "start": "node app/server/dist/index.js",
+    "serve": "npm run build && npm start",
+    "dev:server": "npm --prefix app/server run dev",
+    "dev:client": "npm --prefix app/client run dev",
+    "test": "npm --prefix app/server test"
+  }
+}

@@ -1,0 +1,171 @@
+/* Media Library — layered on Content.css, which supplies the section and form
+   styles this screen shares with the other content pages. */
+
+.media-upload__preview {
+  max-width: 260px;
+  max-height: 180px;
+  object-fit: contain;
+  margin: var(--space-3) 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.media-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.media-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* Grouping by thematic area is what stops a library of forty being a pile of
+   forty — it mirrors how the matcher narrows candidates. */
+.media-group {
+  margin-bottom: var(--space-6);
+}
+
+.media-group__title {
+  margin: 0 0 var(--space-3);
+  font-size: 0.95rem;
+}
+
+.media-group__count {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+.media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.media-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.media-card.is-inactive {
+  opacity: 0.55;
+}
+
+.media-card__image {
+  width: 100%;
+  height: 150px;
+  object-fit: cover;
+  background: var(--color-surface-muted, var(--color-surface));
+}
+
+.media-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.media-card__title {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.media-card__meta {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.media-card__desc {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+/* An image with nothing written about it is a matching problem, so it says so
+   on the card rather than quietly ranking last forever. */
+.media-card__warn {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--color-text-subtle, var(--color-text-muted));
+  font-style: italic;
+}
+
+.media-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.media-tag {
+  padding: 1px 7px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: 999px;
+  font-size: 0.72rem;
+}
+
+.media-card__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: auto;
+}
+
+.media-card__body input,
+.media-card__body textarea,
+.media-card__body select {
+  width: 100%;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.82rem;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+/* --- suggestions, shown where an article picks its image ----------------- */
+
+.media-suggestion {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.media-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.media-suggestion__thumb {
+  width: 90px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  flex: 0 0 auto;
+}
+
+.media-suggestion__reasons {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 640px) {
+  .media-grid {
+    grid-template-columns: 1fr;
+  }
+}

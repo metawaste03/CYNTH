@@ -1,0 +1,288 @@
+/*
+  QUALITY GATE + SEO STATUS (Milestone 15).
+
+  One tone scale shared by both status badges, so a glance down the list
+  compares like with like — but two separate vocabularies, because Quality and
+  SEO answer different questions and must not read as one verdict.
+*/
+
+.readiness-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+  white-space: nowrap;
+}
+
+.readiness-badge--neutral {
+  color: var(--color-text-subtle);
+  background: var(--color-surface-muted);
+}
+
+.readiness-badge--good {
+  color: #1a7f4b;
+  background: rgba(26, 127, 75, 0.12);
+}
+
+.readiness-badge--caution {
+  color: #8a5b00;
+  background: rgba(190, 130, 0, 0.14);
+}
+
+.readiness-badge--bad {
+  color: var(--color-danger);
+  background: rgba(192, 57, 43, 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  .readiness-badge--good {
+    color: #5cc98d;
+    background: rgba(92, 201, 141, 0.14);
+  }
+
+  .readiness-badge--caution {
+    color: #e0aa4a;
+    background: rgba(224, 170, 74, 0.16);
+  }
+
+  .readiness-badge--bad {
+    color: #ef7b6d;
+    background: rgba(239, 123, 109, 0.14);
+  }
+}
+
+/* --- the pair, in workflow order ---------------------------------------- */
+
+.readiness-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
+}
+
+.readiness-pair__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.readiness-pair__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.readiness-pair__arrow {
+  color: var(--color-text-subtle);
+}
+
+/* --- the cross-article table -------------------------------------------- */
+
+.readiness-table__wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.readiness-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.readiness-table th,
+.readiness-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.readiness-table thead th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--color-text-muted);
+  background: var(--color-surface-muted);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.readiness-table tbody tr:last-child th,
+.readiness-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.readiness-table__title {
+  font-weight: 600;
+  max-width: 32ch;
+}
+
+.readiness-table__note,
+.readiness-table__detail,
+.readiness-table__timestamp {
+  display: block;
+  font-weight: 400;
+}
+
+.readiness-table__detail {
+  margin-top: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+}
+
+.readiness-table__timestamp,
+.readiness-table__note {
+  margin-top: var(--space-1);
+  color: var(--color-text-subtle);
+  font-size: 12px;
+}
+
+.readiness-table__actions {
+  white-space: nowrap;
+}
+
+/* --- the per-article panel ----------------------------------------------- */
+
+.quality-gate__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.quality-gate__counts {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+}
+
+.quality-gate__seo-line {
+  margin: var(--space-3) 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  max-width: 80ch;
+}
+
+/* A stored result that predates an edit is reported as stale, never silently
+   refreshed — an automatic re-run would hide that the answer changed. */
+.quality-gate__stale,
+.quality-gate__preview-note {
+  margin: var(--space-3) 0 0;
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.quality-gate__group {
+  margin-top: var(--space-5);
+}
+
+.quality-gate__group h4 {
+  margin: 0 0 var(--space-3);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+}
+
+.quality-gate__checks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.quality-check {
+  border: 1px solid var(--color-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+}
+
+.quality-check--passed {
+  border-left-color: #1a7f4b;
+}
+
+.quality-check--warning {
+  border-left-color: #be8200;
+}
+
+.quality-check--blocking {
+  border-left-color: var(--color-danger);
+}
+
+.quality-check--skipped,
+.quality-check--advisory {
+  border-left-color: var(--color-border);
+  opacity: 0.75;
+}
+
+.quality-check__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.quality-check__label {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.quality-check__outcome {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  color: var(--color-text-subtle);
+}
+
+.quality-check--passed .quality-check__outcome {
+  color: #1a7f4b;
+}
+
+.quality-check--warning .quality-check__outcome {
+  color: #8a5b00;
+}
+
+.quality-check--blocking .quality-check__outcome {
+  color: var(--color-danger);
+}
+
+/* An advisory failure is reported and never counted against the article, so
+   it must not borrow a warning's colour. */
+.quality-check--advisory .quality-check__outcome {
+  color: var(--color-text-subtle);
+}
+
+/* The explanation is not decoration: "the user should be able to understand
+   why an article failed" is the requirement a bare status cannot meet. */
+.quality-check__detail {
+  margin: var(--space-2) 0 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  max-width: 90ch;
+}
+
+.quality-check__fix {
+  margin: var(--space-2) 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--color-text);
+}

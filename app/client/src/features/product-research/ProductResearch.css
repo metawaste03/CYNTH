@@ -1,0 +1,167 @@
+/* Product research — the products attached to one article. Layered on the
+   wizard's own field styles rather than restating them. */
+
+.product-research__form {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--color-surface-muted, var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.product-research__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.product-research__muted {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* The next step after a refusal, shown with the refusal rather than after it. */
+.product-research__remedy {
+  display: block;
+  margin-top: var(--space-2);
+  font-weight: 400;
+}
+
+.product-research__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.product-research__item {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.product-research__item:last-child {
+  border-bottom: 0;
+}
+
+.product-research__thumb {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.product-research__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.product-research__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.product-research__use-case {
+  margin: var(--space-2) 0 0;
+  font-size: 0.9rem;
+}
+
+.product-research__note {
+  margin: var(--space-1) 0 0;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* The affiliate link is shown in full and monospaced, because "is this
+   exactly the link I pasted?" is a question the user must be able to answer
+   by looking. It scrolls rather than wrapping so the tag stays readable. */
+.product-research__link {
+  margin: var(--space-2) 0 0;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.product-research__link code {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.product-research__item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+}
+
+.product-research__existing {
+  margin-top: var(--space-5);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.product-research__existing summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.status-badge--researched {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.status-badge--failed {
+  background: var(--color-danger-soft, transparent);
+  color: var(--color-danger, inherit);
+}
+
+@media (max-width: 640px) {
+  .product-research__item {
+    flex-direction: column;
+  }
+
+  .product-research__item-actions {
+    flex-direction: row;
+  }
+}
+
+/* --- Placement review verdicts (Milestone 18) --------------------------- */
+
+/* A good verdict is styled as a real, positive answer rather than as the
+   absence of a warning — the review is asked to say when a placement works. */
+.placement-verdict--good {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.placement-verdict--acceptable {
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.placement-verdict--weak,
+.placement-verdict--misplaced {
+  background: var(--color-danger-soft, transparent);
+  color: var(--color-danger, inherit);
+}
+
+/* A suggestion, shown as one. Nothing has been moved. */
+.placement-suggestion {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-border);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}

@@ -20,12 +20,28 @@ const SECTIONS: SettingsSection[] = [
   {
     icon: 'site',
     title: 'WordPress',
-    description: 'Connect the EveryFiveDays WordPress site for manual publishing.',
+    description: 'Connect a WordPress site so approved drafts can be sent to it. Cynth never publishes automatically.',
+    href: '/settings/wordpress',
+  },
+  {
+    icon: 'system',
+    title: 'Model Roles',
+    description:
+      'Which model performs which job. Premium models where quality matters; a much cheaper one for the narrow keyword task.',
+    href: '/settings/models',
+  },
+  {
+    icon: 'products',
+    title: 'Amazon Creators API',
+    description:
+      "Amazon's official product-data service. Required for Amazon product URLs — Cynth does not read Amazon product pages.",
+    href: '/settings/amazon',
   },
   {
     icon: 'qualityGate',
     title: 'Editorial',
-    description: 'Editorial standards and quality gate preferences.',
+    description: 'Publication-wide standards, including how long an article may be.',
+    href: '/settings/editorial',
   },
   {
     icon: 'settings',

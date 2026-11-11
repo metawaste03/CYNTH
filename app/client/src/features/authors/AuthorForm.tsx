@@ -14,6 +14,10 @@ export interface AuthorFormValues {
   preferredExpressions: string;
   prohibitedExpressions: string;
   writingNotes: string;
+  expertise: string;
+  perspective: string;
+  editorialPrinciples: string;
+  boundaries: string;
   isActive: boolean;
 }
 
@@ -36,6 +40,10 @@ const EMPTY_VALUES: AuthorFormValues = {
   preferredExpressions: '',
   prohibitedExpressions: '',
   writingNotes: '',
+  expertise: '',
+  perspective: '',
+  editorialPrinciples: '',
+  boundaries: '',
   isActive: true,
 };
 
@@ -91,6 +99,10 @@ export function AuthorForm({ initialValues, showSamplesEditor, submitLabel, onSu
         preferredExpressions: values.preferredExpressions.trim() || undefined,
         prohibitedExpressions: values.prohibitedExpressions.trim() || undefined,
         writingNotes: values.writingNotes.trim() || undefined,
+        expertise: values.expertise.trim() || undefined,
+        perspective: values.perspective.trim() || undefined,
+        editorialPrinciples: values.editorialPrinciples.trim() || undefined,
+        boundaries: values.boundaries.trim() || undefined,
         isActive: values.isActive,
         writingSamples: showSamplesEditor && samples.length ? samples : undefined,
       });
@@ -146,6 +158,53 @@ export function AuthorForm({ initialValues, showSamplesEditor, submitLabel, onSu
         <label>
           Target Audience
           <input value={values.targetAudience} onChange={(e) => updateField('targetAudience', e.target.value)} />
+        </label>
+      </fieldset>
+
+      {/* The persona is what makes a generated article sound like a person.
+          Every field below is sent to the model as explicit guidance — see
+          server/src/features/generation/generationContext.service.ts. */}
+      <fieldset>
+        <legend>Persona</legend>
+        <p className="form-hint">
+          This is the editorial identity the model writes as. Anything you enter here becomes part of the generation
+          instructions. Leave a field blank and it is simply omitted — nothing is invented on your behalf.
+        </p>
+        <label>
+          Expertise
+          <textarea
+            rows={3}
+            value={values.expertise}
+            onChange={(e) => updateField('expertise', e.target.value)}
+            placeholder="What this author knows deeply, and what they can speak about with authority."
+          />
+        </label>
+        <label>
+          Perspective
+          <textarea
+            rows={3}
+            value={values.perspective}
+            onChange={(e) => updateField('perspective', e.target.value)}
+            placeholder="How this author approaches a subject — what they notice, what they question."
+          />
+        </label>
+        <label>
+          Editorial principles
+          <textarea
+            rows={3}
+            value={values.editorialPrinciples}
+            onChange={(e) => updateField('editorialPrinciples', e.target.value)}
+            placeholder="What this author prioritises when writing: accuracy, usefulness, plain language…"
+          />
+        </label>
+        <label>
+          Boundaries
+          <textarea
+            rows={3}
+            value={values.boundaries}
+            onChange={(e) => updateField('boundaries', e.target.value)}
+            placeholder="What this author must never claim, recommend, or discuss. Sent as an explicit instruction."
+          />
         </label>
       </fieldset>
 

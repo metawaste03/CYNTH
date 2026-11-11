@@ -1,0 +1,242 @@
+/* WordPress connection settings. */
+
+.wordpress-settings__back {
+  margin: 0 0 var(--space-4);
+  font-size: 0.85rem;
+}
+
+.wordpress-settings__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.wordpress-settings__toolbar h2 {
+  margin: 0;
+}
+
+.wordpress-settings__empty,
+.wordpress-settings__hint {
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+}
+
+.wordpress-form {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.wordpress-form label {
+  display: grid;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.wordpress-form input,
+.wordpress-form select {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.wordpress-form small {
+  color: var(--color-text-muted);
+  font-weight: 400;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.wordpress-form code {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.wordpress-form__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.wordpress-settings__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.wordpress-connection {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.wordpress-connection__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.wordpress-connection__header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.wordpress-connection__url {
+  margin: 2px 0 0;
+  color: var(--color-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.wordpress-connection__badges {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.wordpress-connection__facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+
+.wordpress-connection__facts dt {
+  color: var(--color-text-subtle);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.wordpress-connection__facts dd {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+}
+
+/* The test result. Colour separates "connected" from "failed" at a glance;
+   the stage guidance beneath says which of the four failures it was. */
+.wordpress-connection__test {
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+
+.wordpress-connection__test.is-ok {
+  border-left-color: #2f9e5f;
+}
+
+.wordpress-connection__test.is-failed {
+  border-left-color: var(--color-danger);
+}
+
+.wordpress-connection__test-message {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.wordpress-connection__test-guidance {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+.wordpress-connection__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+}
+
+.wordpress-connection__authors {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+.wordpress-connection__authors label {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 380px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.wordpress-connection__authors select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.88rem;
+}
+
+.wordpress-settings__history {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+.wordpress-settings__history h2 {
+  margin: 0 0 var(--space-1);
+}
+
+.wordpress-settings__history ul {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wordpress-history {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 0.82rem;
+}
+
+.wordpress-history.is-success {
+  border-left-color: #2f9e5f;
+}
+
+.wordpress-history.is-failure {
+  border-left-color: var(--color-danger);
+}
+
+.wordpress-history__when {
+  color: var(--color-text-subtle);
+  font-size: 0.75rem;
+}
+
+.wordpress-history__what {
+  text-transform: capitalize;
+}
+
+.wordpress-history__error {
+  color: var(--color-danger);
+  font-size: 0.78rem;
+}

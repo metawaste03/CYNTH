@@ -1,0 +1,65 @@
+.demand-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.demand-import label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 0.9em;
+}
+
+.demand-steps {
+  color: var(--color-text-muted);
+  margin: var(--space-2) 0 0;
+  padding-left: 1.2em;
+}
+
+.demand-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.demand-table th,
+.demand-table td {
+  text-align: left;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+.demand-table th {
+  color: var(--color-text-subtle);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.demand-table .demand-num {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.demand-open {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.demand-scroll {
+  overflow-x: auto;
+}
+
+.demand-remove {
+  background: none;
+  border: 0;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  font: inherit;
+}

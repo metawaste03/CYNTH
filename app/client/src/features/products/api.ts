@@ -4,7 +4,10 @@ import type { Product, ProductDetail, ProductImage, ProductInput, ProductListIte
 export interface ProductListFilters {
   search?: string;
   category?: string;
+  isFeaturedPick?: boolean;
   status?: 'active' | 'inactive';
+  /** A theme id as a string, or 'none' for products with no thematic area. */
+  themeId?: string;
 }
 
 function buildQuery(filters: ProductListFilters): string {
@@ -12,12 +15,24 @@ function buildQuery(filters: ProductListFilters): string {
   if (filters.search) params.set('search', filters.search);
   if (filters.category) params.set('category', filters.category);
   if (filters.status) params.set('status', filters.status);
+  if (filters.themeId) params.set('themeId', filters.themeId);
   const qs = params.toString();
   return qs ? `?${qs}` : '';
 }
 
 export function fetchProducts(filters: ProductListFilters = {}): Promise<ProductListItem[]> {
   return api.get<{ products: ProductListItem[] }>(`/products${buildQuery(filters)}`).then((r) => r.products);
+}
+
+export interface PublishResult {
+  ok: boolean;
+  steps: { name: string; ok: boolean; output: string }[];
+  summary: string;
+}
+
+/** Export every active product and send it to EveryFiveDays. Changes the live site. */
+export function publishProducts(): Promise<PublishResult> {
+  return api.post<PublishResult>('/products/publish', {});
 }
 
 export function fetchProductCategories(): Promise<string[]> {

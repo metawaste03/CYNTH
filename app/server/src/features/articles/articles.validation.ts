@@ -9,6 +9,10 @@ export interface ArticleDraftInput {
   articleTypeId: number;
   authorId: number | null;
   productId: number | null;
+  /** Content configuration this article belongs to. All optional — a draft is valid before any of it is chosen. */
+  projectId: number | null;
+  themeId: number | null;
+  topicId: number | null;
   topic: string | null;
   title: string | null;
   targetAudience: string | null;
@@ -64,6 +68,9 @@ export function validateArticleDraftInput(body: unknown): ValidationResult<Artic
 
   const authorId = optionalPositiveId(input.authorId, 'authorId', errors);
   const productId = optionalPositiveId(input.productId, 'productId', errors);
+  const projectId = optionalPositiveId(input.projectId, 'projectId', errors);
+  const themeId = optionalPositiveId(input.themeId, 'themeId', errors);
+  const topicId = optionalPositiveId(input.topicId, 'topicId', errors);
 
   for (const field of OPTIONAL_STRING_FIELDS) {
     if (input[field] !== undefined && input[field] !== null && typeof input[field] !== 'string') {
@@ -82,6 +89,9 @@ export function validateArticleDraftInput(body: unknown): ValidationResult<Artic
       articleTypeId,
       authorId,
       productId,
+      projectId,
+      themeId,
+      topicId,
       topic: asString('topic'),
       title: asString('title'),
       targetAudience: asString('targetAudience'),

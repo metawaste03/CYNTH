@@ -1,5 +1,5 @@
 import { GenerationError, redactSecrets, truncateForDisplay } from '../generation.errors.js';
-import { DEFAULT_BASE_URLS } from '../generation.constants.js';
+import { describeUnparsableBody, diagnoseBaseUrl } from './baseUrl.js';
 
 /**
  * The HTTP plumbing every provider adapter shares: one attempt, a hard
@@ -17,29 +17,30 @@ export interface ProviderResponse {
   json: Record<string, unknown> | null;
   /** Raw body text, kept only for error reporting when JSON parsing fails. */
   rawText: string;
+  /** The response's declared content type, so an unparseable body can say what it actually was. */
+  contentType: string | null;
+  /** The URL that produced this response, so an error can name it. Never carries a credential — keys travel in headers. */
+  url: string;
 }
 
-/** Normalizes a configured base_url (trailing slashes are a common paste artifact) or falls back to the adapter default. */
+/**
+ * Normalizes a configured base_url or falls back to the adapter default,
+ * refusing one that is wrong in a way Cynth can name.
+ *
+ * The refusal quotes the corrected value rather than applying it: a provider
+ * may legitimately sit behind a proxy whose URL Cynth has no business
+ * rewriting. See baseUrl.ts for the failure this guards against.
+ */
 export function resolveBaseUrl(baseUrl: string | null, providerType: string): string {
-  const configured = baseUrl?.trim().replace(/\/+$/, '');
-  if (configured) {
-    if (!/^https?:\/\//i.test(configured)) {
-      throw new GenerationError(
-        'invalid_configuration',
-        'The provider Base URL must start with http:// or https://. Update it in AI Provider settings.',
-      );
-    }
-    return configured;
-  }
+  const diagnosis = diagnoseBaseUrl(baseUrl, providerType);
+  if (diagnosis.ok && diagnosis.resolved) return diagnosis.resolved;
 
-  const fallback = DEFAULT_BASE_URLS[providerType];
-  if (!fallback) {
-    throw new GenerationError(
-      'invalid_configuration',
-      'This provider has no Base URL configured and Cynth has no default for its type.',
-    );
-  }
-  return fallback;
+  throw new GenerationError(
+    'invalid_configuration',
+    diagnosis.suggestion
+      ? `${diagnosis.problem} Set the Base URL to ${diagnosis.suggestion} in AI Provider settings.`
+      : `${diagnosis.problem} Update it in AI Provider settings.`,
+  );
 }
 
 export async function postJson(
@@ -73,6 +74,11 @@ export async function postJson(
     );
   }
 
+  return readResponse(response, url);
+}
+
+/** Reads a fetch Response into Cynth's own shape. Shared so POST and GET report an unreadable body identically. */
+async function readResponse(response: Response, url: string): Promise<ProviderResponse> {
   const rawText = await response.text().catch(() => '');
   let json: Record<string, unknown> | null = null;
   try {
@@ -82,7 +88,14 @@ export async function postJson(
     json = null;
   }
 
-  return { status: response.status, ok: response.ok, json, rawText };
+  return {
+    status: response.status,
+    ok: response.ok,
+    json,
+    rawText,
+    contentType: response.headers.get('content-type'),
+    url,
+  };
 }
 
 /**
@@ -142,11 +155,31 @@ export function throwForFailedResponse(response: ProviderResponse, apiKey: strin
   );
 }
 
-/** A 200 that isn't JSON at all — treated as a malformed response rather than silently producing an empty article. */
-export function throwForUnparsableBody(): never {
+/**
+ * A 200 that isn't JSON at all — malformed rather than an empty article.
+ *
+ * The message names what came back and from where, because "could not read
+ * the response" on its own is unactionable: it reads as a provider fault when
+ * the usual cause is a Base URL pointing at a website instead of an API root,
+ * which answers 200 with a perfectly valid HTML page. See baseUrl.ts.
+ */
+export function throwForUnparsableBody(response?: ProviderResponse): never {
+  if (!response) {
+    throw new GenerationError(
+      'provider_error',
+      'The provider returned a response Cynth could not read. Nothing was saved — you can try again.',
+    );
+  }
+
+  const what = describeUnparsableBody(response.contentType, response.rawText);
+  const isWebPage = what === 'an HTML web page';
+
   throw new GenerationError(
     'provider_error',
-    'The provider returned a response Cynth could not read. Nothing was saved — you can try again.',
+    isWebPage
+      ? `${response.url} returned ${what} instead of data. The provider Base URL is almost certainly pointing at the ` +
+        `website rather than the API endpoint — check it in AI Provider settings.`
+      : `${response.url} returned ${what}. Cynth could not read it, so nothing was saved.`,
   );
 }
 
@@ -155,4 +188,33 @@ export function readTokenCount(source: unknown, key: string): number | null {
   if (!source || typeof source !== 'object') return null;
   const value = (source as Record<string, unknown>)[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * A GET returning JSON, for provider metadata endpoints (model catalogues).
+ * Shares postJson's timeout and error vocabulary; generates nothing.
+ */
+export async function getJson(
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<ProviderResponse> {
+  let response: Response;
+
+  try {
+    response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new GenerationError('timeout', `The provider did not respond within ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw new GenerationError('network_error', 'Cynth could not reach the provider to read its model catalogue.');
+  }
+
+  const result = await readResponse(response, url);
+
+  if (!result.ok) throwForFailedResponse(result, headers.authorization ?? '');
+  if (!result.json) throwForUnparsableBody(result);
+
+  return result;
 }
