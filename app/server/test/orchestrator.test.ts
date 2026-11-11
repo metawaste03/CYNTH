@@ -370,6 +370,136 @@ test('SPEND: an unconfirmed revision cost leaves the run waiting, not finished',
   }
 });
 
+test('STRANDED: a revision that was never written can be run later, on request and after confirmation', async () => {
+  /**
+   * The first runs ended in NEEDS_EDITORIAL_ATTENTION at the cost question,
+   * with the reviewer's notes stored and the revision never written. Those
+   * runs can no longer be advanced. This is the one thing still owed to them.
+   */
+  const paidModelId = Number(
+    dbModule
+      .getDatabase()
+      .prepare(
+        `INSERT INTO ai_provider_models (provider_id, model_name, is_enabled, prompt_price, completion_price, is_free, cost_tier)
+         VALUES (?, 'stub/paid-late', 1, 0.000001, 0.000002, 0, 'low')`,
+      )
+      .run(providerId).lastInsertRowid,
+  );
+  roles.setRoleAssignment('article_revision', 'development', { primaryModelId: paidModelId, fallbackModelId: null });
+  settings.setSetting('generation.mode', 'production');
+
+  try {
+    const failingReview = JSON.stringify({
+      revision_required: true,
+      overall_score: 0.52,
+      summary: 'One unsupported claim.',
+      strengths: ['Good structure'],
+      product_assessment: 'No products.',
+      issues: [
+        {
+          severity: 'major',
+          section: 'introduction',
+          problem: 'Claims a reduction in eye strain with no source.',
+          required_change: 'Remove the figure, or attribute it.',
+          scope: 'passage',
+          passage: 'reduces the contrast between a bright screen and a dark room',
+        },
+      ],
+      preserve_sections: ['steps', 'conclusion'],
+    });
+    const revised = JSON.stringify({ ...JSON.parse(ARTICLE), excerpt: 'The revised excerpt.' });
+    stage(TOPIC, KEYWORDS, CLASSIFY, ARTICLE, failingReview, revised);
+
+    const started = orchestrator.startArticlePipeline({ themeId: theme.id, mode: 'development' }) as {
+      pipelineId: number;
+      articleId: number;
+    };
+    await assert.rejects(() => orchestrator.advancePipeline(started.pipelineId, { confirmedCost: false }));
+
+    // Exactly how the old runs were left.
+    repo.setState(started.pipelineId, 'NEEDS_EDITORIAL_ATTENTION', {
+      stage: 'article_revision',
+      note: 'This is a paid model. Confirm the estimated cost to continue.',
+    });
+
+    const stranded = orchestrator.getPipelineStatus(started.pipelineId)!;
+    assert.equal(stranded.waitingRevision?.issues.length, 1, 'the notes are offered with the run');
+    assert.equal(stranded.waitingRevision?.issues[0].requiredChange, 'Remove the figure, or attribute it.');
+
+    // Advancing does nothing for a finished run. That is why this exists.
+    const callsBefore = callCount;
+    await orchestrator.advancePipeline(started.pipelineId, { confirmedCost: true });
+    assert.equal(callCount, callsBefore);
+
+    // Something was changed in Cynth after the draft was written.
+    const database = dbModule.getDatabase();
+    database
+      .prepare("UPDATE articles SET content = content || char(10) || 'EDITED IN CYNTH' WHERE id = ?")
+      .run(started.articleId);
+    const edited = database.prepare('SELECT content FROM articles WHERE id = ?').get(started.articleId) as {
+      content: string;
+    };
+
+    // Unconfirmed: refused, nothing called, nothing replaced, nothing used up.
+    await assert.rejects(
+      () => orchestrator.runWaitingRevision(started.pipelineId, { confirmedCost: false }),
+      (error: any) => error.code === 'cost_confirmation_required',
+    );
+    assert.equal(callCount, callsBefore);
+    assert.equal(repo.getPipelineById(started.pipelineId)!.state, 'NEEDS_EDITORIAL_ATTENTION');
+    assert.equal(repo.getPipelineById(started.pipelineId)!.revisionCount, 0);
+    assert.equal(
+      (database.prepare('SELECT COUNT(*) AS n FROM article_revision_backups').get() as { n: number }).n,
+      0,
+    );
+    assert.ok(orchestrator.getPipelineStatus(started.pipelineId)!.waitingRevision, 'still on offer after a refusal');
+
+    // Confirmed: the one revision, then validation.
+    const status = await orchestrator.runWaitingRevision(started.pipelineId, { confirmedCost: true });
+    assert.equal(callCount, callsBefore + 1, 'only the revision is called');
+    assert.equal(status.pipeline.state, 'READY', JSON.stringify(status.stages.map((s) => [s.stage, s.status, s.error])));
+    assert.equal(status.pipeline.revisionCount, 1);
+    assert.equal(status.waitingRevision, null);
+
+    const after = database.prepare('SELECT excerpt FROM articles WHERE id = ?').get(started.articleId) as {
+      excerpt: string;
+    };
+    assert.equal(after.excerpt, 'The revised excerpt.');
+
+    // What it replaced, edit included, can be put back.
+    const backup = database
+      .prepare('SELECT content, pipeline_id FROM article_revision_backups WHERE article_id = ?')
+      .get(started.articleId) as { content: string; pipeline_id: number };
+    assert.equal(backup.content, edited.content);
+    assert.equal(backup.pipeline_id, started.pipelineId);
+
+    // And the allowance is still one.
+    await assert.rejects(
+      () => orchestrator.runWaitingRevision(started.pipelineId, { confirmedCost: true }),
+      /no requested revision waiting/,
+    );
+    assert.equal(callCount, callsBefore + 1);
+  } finally {
+    roles.setRoleAssignment('article_revision', 'development', { primaryModelId: modelId, fallbackModelId: null });
+    settings.setSetting('generation.mode', 'test');
+  }
+});
+
+test('STRANDED: a run that stopped for any other reason is not offered a revision', async () => {
+  stage(TOPIC, KEYWORDS, CLASSIFY, ARTICLE, PASSING_REVIEW);
+  const started = orchestrator.startArticlePipeline({ themeId: theme.id, mode: 'development' }) as { pipelineId: number };
+  const status = await orchestrator.advancePipeline(started.pipelineId, { confirmedCost: true });
+  assert.equal(status.waitingRevision, null);
+
+  // Even forced into the same state: the reviewer did not ask for one.
+  repo.setState(started.pipelineId, 'NEEDS_EDITORIAL_ATTENTION', { note: 'Something else.' });
+  assert.equal(orchestrator.getPipelineStatus(started.pipelineId)!.waitingRevision, null);
+  await assert.rejects(
+    () => orchestrator.runWaitingRevision(started.pipelineId, { confirmedCost: true }),
+    /no requested revision waiting/,
+  );
+});
+
 test.after(() => {
   globalThis.fetch = realFetch;
   dbModule.closeDatabase();

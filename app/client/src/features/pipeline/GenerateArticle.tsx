@@ -12,6 +12,7 @@ import {
   fetchResumableRuns,
   rerunCheckpoint,
   retryPipeline,
+  runWaitingRevision,
   setRunMode,
   startPipeline,
 } from './api';
@@ -288,6 +289,47 @@ export function GenerateArticle() {
       await run(status.pipeline.id, false);
     } catch (err) {
       setError(err instanceof ApiError ? err.errors.join(' ') : 'This run could not be resumed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * The revision a stopped run was owed. Asks the server first without
+   * confirming anything, so the cost is shown before it is agreed to.
+   */
+  async function handleRunRevision() {
+    if (!status) return;
+    const pipelineId = status.pipeline.id;
+
+    const attempt = async (confirmedCost: boolean) => {
+      setIsRunning(true);
+      try {
+        const result = await runWaitingRevision(pipelineId, confirmedCost);
+        setStatus(result.status);
+        setNotice('The revision is written. Open the article to read it before pushing anything.');
+      } finally {
+        setIsRunning(false);
+      }
+    };
+
+    setBusy(true);
+    setError(null);
+    try {
+      await attempt(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.details?.status) {
+        setStatus(err.details.status as PipelineStatus);
+      }
+      if (err instanceof ApiError && err.code === 'cost_confirmation_required') {
+        setPendingSpend({
+          message: err.errors.join(' '),
+          detail: (err.details?.spend as SpendRefusal | null) ?? null,
+          retry: () => attempt(true),
+        });
+      } else {
+        setError(err instanceof ApiError ? err.errors.join(' ') : 'The revision could not be run.');
+      }
     } finally {
       setBusy(false);
     }
@@ -624,6 +666,47 @@ export function GenerateArticle() {
               <span className="pipeline-muted">
                 Completed stages are kept and are not charged again — only the stage that failed runs.
               </span>
+            </div>
+          )}
+
+          {/* The reviewer asked for a revision and the run ended before it was
+              written. Offered here, never run unasked, and paid for only
+              after the estimate has been shown and agreed. */}
+          {status.waitingRevision && (
+            <div className="form-notice">
+              <p>
+                <strong>The reviewer asked for a revision that was never written.</strong>{' '}
+                {status.waitingRevision.summary}
+              </p>
+              <details>
+                <summary>
+                  The reviewer&rsquo;s {status.waitingRevision.issues.length} notes
+                </summary>
+                <ol>
+                  {status.waitingRevision.issues.map((issue, index) => (
+                    <li key={index}>
+                      <strong>
+                        [{issue.severity}] {issue.section}:
+                      </strong>{' '}
+                      {issue.problem} <em>{issue.requiredChange}</em>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+              <div className="content-form__actions">
+                <button
+                  type="button"
+                  className="button button--primary"
+                  disabled={busy || isRunning}
+                  onClick={handleRunRevision}
+                >
+                  {busy || isRunning ? 'Working…' : 'Run the requested revision'}
+                </button>
+                <span className="pipeline-muted">
+                  Rewrites Cynth&rsquo;s copy of this article, after you confirm the cost. The live post is not
+                  touched until you push, and pushing replaces anything edited on the site since.
+                </span>
+              </div>
             </div>
           )}
 

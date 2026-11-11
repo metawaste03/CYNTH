@@ -570,6 +570,19 @@ CREATE TABLE IF NOT EXISTS generation_history (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- What an article said before a late revision replaced it. Written only when
+-- a person runs the revision a stopped run was owed, so it can be put back.
+CREATE TABLE IF NOT EXISTS article_revision_backups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+  pipeline_id INTEGER,
+  content TEXT,
+  structured_content TEXT,
+  generated_title TEXT,
+  excerpt TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ---------------------------------------------------------------------------
 -- CMS integration (Milestone 13).
 --

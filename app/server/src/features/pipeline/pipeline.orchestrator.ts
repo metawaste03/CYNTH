@@ -146,6 +146,16 @@ export interface PipelineStatus {
   decisions: { kind: CheckpointKind; label: string; resolution: string | null; decision: unknown; decidedAt: string | null }[];
   /** True when the run has finished, whatever the outcome. */
   finished: boolean;
+  /**
+   * The revision the reviewer asked for and nobody wrote, with its notes.
+   * Null on every run that is not stopped in exactly that place.
+   */
+  waitingRevision: WaitingRevision | null;
+}
+
+export interface WaitingRevision {
+  summary: string;
+  issues: { severity: string; section: string; problem: string; requiredChange: string }[];
 }
 
 /**
@@ -385,6 +395,7 @@ export function getPipelineStatus(pipelineId: number): PipelineStatus | null {
         decidedAt: entry.decidedAt,
       })),
     finished: isTerminal(pipeline.state),
+    waitingRevision: describeWaitingRevision(pipeline),
   };
 }
 
@@ -1065,5 +1076,118 @@ export function resumeAfterFailure(pipelineId: number): PipelineStatus | { error
       : 'Resumed after a failure. Nothing had completed yet, so the run starts from the first stage.',
   });
 
+  return getPipelineStatus(pipelineId)!;
+}
+
+/* ------------------------------------------ the revision that never ran --- */
+
+/**
+ * The review a stopped run is still owed a revision for, or null.
+ *
+ * A run qualifies only when it ended at the revision itself: reviewed, a
+ * revision asked for, none written, none of the allowance used, and no final
+ * validation. Every other NEEDS_EDITORIAL_ATTENTION run stopped for a reason a
+ * revision does not answer, and is left alone.
+ */
+function reviewOwedARevision(pipeline: PipelineDto): ArticleReview | null {
+  if (pipeline.state !== 'NEEDS_EDITORIAL_ATTENTION') return null;
+  if (pipeline.revisionCount >= MAX_AUTOMATIC_REVISIONS) return null;
+  if (findCompletedStage(pipeline.id, pipeline.version, 'article_revision')) return null;
+  if (findCompletedStage(pipeline.id, pipeline.version, 'final_validation')) return null;
+
+  const review = outputOf<ArticleReview>(pipeline, 'article_review');
+  if (!review?.revisionRequired || !Array.isArray(review.issues) || review.issues.length === 0) return null;
+  return review;
+}
+
+function describeWaitingRevision(pipeline: PipelineDto): WaitingRevision | null {
+  const review = reviewOwedARevision(pipeline);
+  if (!review) return null;
+  return {
+    summary: review.summary ?? '',
+    issues: review.issues.map((issue) => ({
+      severity: issue.severity,
+      section: issue.section,
+      problem: issue.problem,
+      requiredChange: issue.requiredChange,
+    })),
+  };
+}
+
+/**
+ * Writes the revision a stopped run was owed, then validates the result.
+ *
+ * Deliberately NOT a resume through `advancePipeline`. These runs predate the
+ * coverage gates, and walking them through the whole sequence would run gates
+ * against a plan that was settled, written and published long ago. Only the
+ * two steps that were skipped are run: the one revision, and the validation.
+ *
+ * The article revised is the one Cynth holds NOW, not the draft the writer
+ * first returned, so anything changed in Cynth since is kept. What it replaces
+ * is copied to article_revision_backups.
+ *
+ * Only ever called by a person pressing the button, and it passes the same
+ * spend gate as every paid stage: without `confirmedCost` it refuses and the
+ * run stays exactly where it was.
+ */
+export async function runWaitingRevision(
+  pipelineId: number,
+  options: { confirmedCost?: boolean } = {},
+): Promise<PipelineStatus> {
+  const pipeline = getPipelineById(pipelineId);
+  if (!pipeline) throw new GenerationError('invalid_configuration', 'Pipeline not found.');
+
+  const review = reviewOwedARevision(pipeline);
+  if (!review) {
+    throw new GenerationError('invalid_configuration', 'This run has no requested revision waiting to be written.');
+  }
+
+  const db = getDatabase();
+  const before = db
+    .prepare('SELECT content, structured_content, generated_title, excerpt FROM articles WHERE id = ?')
+    .get(pipeline.articleId) as
+    | { content: string | null; structured_content: string | null; generated_title: string | null; excerpt: string | null }
+    | undefined;
+
+  let article: GeneratedArticle | null = null;
+  try {
+    article = before?.structured_content ? (JSON.parse(before.structured_content) as GeneratedArticle) : null;
+  } catch {
+    article = null;
+  }
+  article ??= outputOf<GeneratedArticle>(pipeline, 'article_generation');
+  if (!article) {
+    throw new GenerationError('invalid_configuration', 'Cynth no longer holds this article in a form it can revise.');
+  }
+
+  // Throws on a refused spend gate (the run is put back as it was) and on a
+  // failed revision (the run records why). Either way nothing was replaced.
+  await runArticleRevision(pipelineId, article, review, { confirmedCost: options.confirmedCost === true });
+
+  db.prepare(
+    `INSERT INTO article_revision_backups (article_id, pipeline_id, content, structured_content, generated_title, excerpt)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    pipeline.articleId,
+    pipelineId,
+    before?.content ?? null,
+    before?.structured_content ?? null,
+    before?.generated_title ?? null,
+    before?.excerpt ?? null,
+  );
+
+  let coverageFindings: ValidationFinding[];
+  try {
+    coverageFindings = await finalCoverageFindings(pipelineId);
+  } catch (error) {
+    coverageFindings = [
+      {
+        severity: 'blocking',
+        check: 'repeats existing article',
+        detail: `The coverage check could not run (${error instanceof Error ? error.message : 'unknown error'}).`,
+      },
+    ];
+  }
+  runFinalValidation(pipelineId, { checked: 'repeats existing article', findings: coverageFindings });
   return getPipelineStatus(pipelineId)!;
 }

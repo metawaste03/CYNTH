@@ -2,6 +2,14 @@
 
 All notable changes to the Cynth project binder will be recorded in this file.
 
+## [0.58.1] - 2026-11-11
+
+### Added
+
+- **"Run the requested revision"** for the runs that stopped before their revision was written. The 22 runs stranded at the cost question could not be advanced: they had already ended. Each now shows the reviewer's notes on its run page, with a button that writes the one revision and then runs final validation. The article page links to it. It revises the article as Cynth holds it now, not the first draft, and copies what it replaces to a new `article_revision_backups` table. It runs only when pressed and only after the cost is confirmed; a refusal leaves the run and the article exactly as they were. Only Cynth's copy changes: the live post is untouched until it is pushed.
+
+**Verified**: 607 tests pass.
+
 ## [0.58.0] - 2026-11-10
 
 ### Fixed

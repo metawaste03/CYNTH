@@ -8,6 +8,7 @@ import type { ArticleProductCard } from './api';
 import { ArticleContent } from './ArticleContent';
 import { formatArticleDate } from './ArticleList';
 import { WordPressPushPanel } from './WordPressPushPanel';
+import { fetchPipelineForArticle } from '../pipeline/api';
 import { DeleteArticleButton } from './DeleteArticleButton';
 import { FeaturedImagePanel } from '../images/FeaturedImagePanel';
 import { SeoPanel } from '../seo/SeoPanel';
@@ -53,6 +54,8 @@ export function ArticleView() {
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  /** The run that still owes this article a revision, when there is one. */
+  const [owedRevision, setOwedRevision] = useState<{ pipelineId: number; notes: number } | null>(null);
 
   const load = useCallback(() => {
     if (!Number.isInteger(articleId) || articleId <= 0) {
@@ -73,6 +76,14 @@ export function ArticleView() {
     fetchArticleProducts(articleId)
       .then(setProducts)
       .catch(() => setProducts([]));
+
+    fetchPipelineForArticle(articleId)
+      .then((run) =>
+        setOwedRevision(
+          run?.waitingRevision ? { pipelineId: run.pipeline.id, notes: run.waitingRevision.issues.length } : null,
+        ),
+      )
+      .catch(() => setOwedRevision(null));
   }, [articleId]);
 
   useEffect(load, [load]);
@@ -119,6 +130,13 @@ export function ArticleView() {
       <p className="article-view__back">
         <Link to="/drafts">← Back to Drafts</Link>
       </p>
+
+      {owedRevision && (
+        <p className="form-notice">
+          The reviewer asked for a revision of this article ({owedRevision.notes} notes) and it was never written.{' '}
+          <Link to={`/generate/${owedRevision.pipelineId}`}>Read the notes or run the revision</Link>
+        </p>
+      )}
 
       <dl className="article-view__meta">
         <MetaRow label="Status" value={article.status} />

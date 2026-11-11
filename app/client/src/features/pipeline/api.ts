@@ -166,6 +166,11 @@ export interface PipelineStatus {
     decidedAt: string | null;
   }[];
   finished: boolean;
+  /** The revision the reviewer asked for and nobody wrote, or null. */
+  waitingRevision: {
+    summary: string;
+    issues: { severity: string; section: string; problem: string; requiredChange: string }[];
+  } | null;
 }
 
 /**
@@ -303,6 +308,22 @@ export function setRunMode(pipelineId: number, runMode: PipelineRunMode): Promis
 /** Safe to call repeatedly — a completed stage returns its stored result and costs nothing. */
 export function advancePipeline(pipelineId: number, confirmedCost: boolean): Promise<{ status: PipelineStatus }> {
   return api.post(`/pipeline/${pipelineId}/advance`, { confirmedCost });
+}
+
+/**
+ * Writes the revision a stopped run was owed. A paid stage: the first call is
+ * refused with the estimate, and only a confirmed second call runs it.
+ */
+export function runWaitingRevision(pipelineId: number, confirmedCost: boolean): Promise<{ status: PipelineStatus }> {
+  return api.post(`/pipeline/${pipelineId}/run-revision`, { confirmedCost });
+}
+
+/** The current run for an article, or null when it never had one. */
+export function fetchPipelineForArticle(articleId: number): Promise<PipelineStatus | null> {
+  return api
+    .get<{ status: PipelineStatus }>(`/pipeline/articles/${articleId}`)
+    .then((r) => r.status)
+    .catch(() => null);
 }
 
 export function fetchPipeline(pipelineId: number): Promise<PipelineStatus> {

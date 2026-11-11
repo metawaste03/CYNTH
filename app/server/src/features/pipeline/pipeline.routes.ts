@@ -11,6 +11,7 @@ import {
   resumeAfterFailure,
   startArticlePipeline,
   statusForArticle,
+  runWaitingRevision,
 } from './pipeline.orchestrator.js';
 import { getPipelineById, startNewVersion } from './pipeline.repository.js';
 import { listAssignableModels, listRoleAssignments, setRoleAssignment, validateRoleConfiguration } from './roleRegistry.repository.js';
@@ -113,6 +114,35 @@ pipelineRouter.post('/:id/advance', async (req, res) => {
   } catch (error) {
     // A failed stage still leaves a readable pipeline, so the status is
     // returned alongside the error rather than the client being left blind.
+    const status = getPipelineStatus(id);
+    if (isGenerationError(error)) {
+      return res.status(400).json({
+        errors: [error.message],
+        code: error.code,
+        retryable: error.retryable,
+        spend: error.spend,
+        status,
+      });
+    }
+    sendError(res, error);
+  }
+});
+
+/**
+ * Writes the revision a stopped run was owed.
+ *
+ * A paid stage, so `confirmedCost` is read from the body and never defaulted:
+ * the first call is refused with the estimate, and only a second call that
+ * carries the confirmation runs anything.
+ */
+pipelineRouter.post('/:id/run-revision', async (req, res) => {
+  const id = parseId(req.params.id);
+  if (id === null) return res.status(400).json({ errors: ['Invalid pipeline id.'] });
+
+  try {
+    const status = await runWaitingRevision(id, { confirmedCost: req.body?.confirmedCost === true });
+    res.json({ status });
+  } catch (error) {
     const status = getPipelineStatus(id);
     if (isGenerationError(error)) {
       return res.status(400).json({
